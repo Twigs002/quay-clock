@@ -133,7 +133,16 @@ function handleClock(body, e) {
 function sheet_(name) {
   var ss = SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(name);
-  if (!sh) throw new Error('Tab "' + name + '" not found.');
+  if (sh) return sh;
+  // Auto-create with the expected header row so setup is fault-tolerant.
+  sh = ss.insertSheet(name);
+  if (name === TAB_EVENTS) {
+    sh.appendRow(['ts', 'id', 'name', 'action', 'duration_hrs', 'source_ip']);
+    sh.setFrozenRows(1);
+  } else if (name === TAB_ROSTER) {
+    sh.appendRow(['id', 'name', 'team', 'pin', 'active']);
+    sh.setFrozenRows(1);
+  }
   return sh;
 }
 function headerIndex_(row) {
