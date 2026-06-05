@@ -3,7 +3,7 @@
   // ---- CONFIG ---------------------------------------------------------------
   // After deploying the Apps Script Web App (see apps_script/SETUP.md),
   // paste its URL below. Until set, the app shows a setup message.
-  const APPS_SCRIPT_URL = ''; // e.g. 'https://script.google.com/macros/s/AKfycb.../exec'
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw3g6cdmfIbWC6TVSybVk5CECKhnSBneDuWGzM4krxcTFgOhS7Ef4InD6F1x9llnl27AA/exec';
 
   // ---- STATE ----------------------------------------------------------------
   let roster = [];           // [{id, name, team, status, lastIn, lastOut}, ...]
