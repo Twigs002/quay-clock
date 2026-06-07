@@ -1,12 +1,12 @@
 {
   "name": "Quay 1 — Clock In / Out",
   "short_name": "Quay Clock",
-  "description": "Daily clock in / clock out for Quay 1 callers",
+  "description": "Clock in/out, timesheets, leave and live team status for Quay 1 staff",
   "start_url": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0F1E3C",
-  "theme_color": "#0F1E3C",
+  "background_color": "#3D5BA6",
+  "theme_color": "#3D5BA6",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }

@@ -1,59 +1,79 @@
-# Quay 1 — Clock In / Out
+# Quay 1 — Crew App
 
-Mobile-first PWA for Quay 1 callers to clock in and out. Replaces the manual
-Connecteam workflow on the free tier; data lives in a Google Sheet you own.
+Mobile-first PWA + admin web dashboard for Quay 1 office & sales staff.
+Replaces Connecteam on the free tier; data lives in a Google Sheet you own.
 
-**Live:** _(set after first deploy)_
+Two surfaces, one backend:
+
+- **`/` (PWA)** — each staff member installs to their phone, logs in once
+  with a 4-digit PIN, then has Home / Timesheet / Leave / Team.
+- **`/admin/`** — desktop dashboard for office managers: who's working now,
+  approve leave, weekly timesheets, staff directory, locations.
 
 ---
 
 ## How it works
 
 ```
-Phone (PWA, GitHub Pages)
-  ↓  POST { action, agentId, pin }
-Google Apps Script Web App
-  ↓  appends row
-Google Sheet (Quay Clock)
-  ↓  read by
-quay-dashboard-v2 (Work Time tab)
+Phone PWA  ─┐
+            │  POST { action, ... }   (text/plain to dodge CORS preflight)
+Admin Web  ─┴────► Google Apps Script Web App
+                     │
+                     ▼
+              Google Sheet (Quay Clock)
+                Roster · Events · Leave · Locations
 ```
 
-- Frontend: vanilla HTML/CSS/JS, install-to-homescreen PWA, offline-capable shell.
-- Backend: a single Apps Script file, deployed as a Web App. Free.
-- Storage: one Google Sheet with two tabs (`Roster`, `Events`). View / edit / export directly.
-- Auth: 4-digit PIN per agent (validated server-side).
+- Frontend: vanilla HTML/CSS/JS, install-to-homescreen PWA, offline shell.
+- Backend: one Apps Script file (`apps_script/Code.gs`), deployed as a Web
+  App. Free.
+- Storage: one Google Sheet with four tabs.
+- Auth: per-user 4-digit PIN. Admin PIN unlocks the admin dashboard.
 
 ---
 
-## Setup (one-time, ~10 minutes)
+## Setup (~10 minutes, one-time)
 
-1. **Backend** — follow [`apps_script/SETUP.md`](apps_script/SETUP.md) to:
-   - Create the Quay Clock Google Sheet
-   - Paste the Apps Script
-   - Deploy as a Web App (Execute as Me, Who has access: Anyone)
-2. **Frontend** — paste the Web App URL into `app.js` (`APPS_SCRIPT_URL`).
-3. **Deploy** — push to GitHub. GitHub Pages auto-serves at the repo URL.
-4. **Roster** — fill in the `Roster` tab of the sheet (id / name / team / pin / active).
-
----
-
-## Day-to-day use
-
-- Agent opens the PWA on their phone (recommended: Add to Home Screen so it launches like a native app).
-- Sees the roster. Clocked-in people appear first with a green badge.
-- Taps their name → enters their 4-digit PIN → sees confirmation with timestamp.
-- End of day: same flow, but the screen shows "See you tomorrow!" with hours worked.
-
-A wall tablet at the office can run the same URL as a kiosk — the UI auto-returns to the roster ~6 seconds after each confirmation.
+1. **Backend** — follow [`apps_script/SETUP.md`](apps_script/SETUP.md):
+   create the sheet, paste the script, deploy as a Web App, copy the URL.
+2. **Wire the URL** into `app.js` (`APPS_SCRIPT_URL` constant) and into
+   `admin/admin.js` (`APPS_SCRIPT_URL` constant).
+3. **Roster** — fill in the `Roster` tab (id, name, role, team, email,
+   pin, active, admin).
+4. **Deploy** — push to GitHub. Pages auto-serves at the repo URL.
 
 ---
 
-## Dashboard integration (future)
+## Day-to-day
 
-The `quay-dashboard-v2` Work Time tab currently estimates clocked-in time as `dialler / 0.85`.
-Once this clock app is running, a small fetcher script in that repo will read the Events sheet
-and replace the estimate with real numbers.
+### Staff (PWA)
+- Install to home screen on first use.
+- Open → enter PIN → stays signed in.
+- **Home** — big yellow CLOCK IN dial. Tapping it opens a note sheet
+  ("what are you working on?") — the note is *required* to clock in.
+- **Timesheet** — week bars + shift entries. Tap CSV to download.
+- **Leave** — annual / sick / family balances, request time off, see status.
+- **Team** — live "who's working now" across the office.
+
+### Manager (admin web)
+- Visit `/admin/` → enter admin PIN.
+- **Dashboard** — 4 stat cards, who's-on-now table, pending approvals
+  with working Approve / Decline, team-hours chart.
+- **Timesheets** — weekly hours per employee, per-row approve.
+- **Leave** — full request table.
+- **Team** — staff directory.
+- **Locations** — office geofences.
+- Every view has a CSV export.
+
+---
+
+## Integration into `quay-dashboard-v2`
+
+The performance dashboard's **Work Time** tab currently estimates clocked
+time as `dialler / 0.85`. Once this clock app is in regular use, a fetcher
+script in that repo reads the `summary` action from Apps Script and
+replaces the estimate with real per-agent hours. See the
+quay-dashboard-v2 README for that wiring.
 
 ---
 
@@ -61,13 +81,18 @@ and replace the estimate with real numbers.
 
 ```
 index.html         PWA shell
-styles.css         Brand styling (Quay 1 navy + brass)
-app.js             UI state machine + API calls
+styles.css         Signal-language brand styles
+app.js             PWA state machine + 4 tabs
 manifest.json      PWA install metadata
-sw.js              Service worker (offline shell, network-first for API)
+sw.js              Service worker (offline shell, network-first API)
+admin/             Admin web dashboard
+  index.html
+  admin.js
+  admin.css
+assets/            Logo + brand assets
 icons/             192px / 512px launcher icons
 apps_script/
-  Code.gs          Backend Apps Script (copy into the script editor)
+  Code.gs          v2 backend (paste into the Apps Script editor)
   SETUP.md         5-minute deployment guide
 ```
 
@@ -79,13 +104,16 @@ apps_script/
 |---|---|---|
 | Cost | Free | Free |
 | Clock in/out | ✅ | ✅ |
-| Data export | ❌ (paywall) | ✅ (your sheet) |
+| Required shift note | ❌ | ✅ |
+| Per-user timesheet | Limited | ✅ |
+| Leave requests + admin approve | ❌ on free | ✅ |
+| Live team view | ❌ on free | ✅ |
+| Admin dashboard | ❌ on free | ✅ |
+| Data export | ❌ (paywall) | ✅ (CSV + your sheet) |
 | Dashboard integration | ❌ | ✅ (planned) |
-| Geofence | ❌ on free | Not built |
-| Push reminder to clock out | ✅ | Not built (Apps Script trigger + email = ~30 min job) |
-| GPS audit trail | ❌ on free | Not built |
+| Geofence | ❌ on free | UI placeholder; not enforced yet |
 | Native apps in stores | ✅ | PWA only (good enough on iOS 16+ / Android) |
 
 ---
 
-*Built 2026-06-05*
+*Built 2026-06-05 · Signal language rebuild 2026-06-07*

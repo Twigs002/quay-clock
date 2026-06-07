@@ -1,6 +1,7 @@
 /* Quay Clock service worker — cache shell, network-first for API calls */
-const CACHE = 'quay-clock-v1';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.json'];
+const CACHE = 'quay-clock-v2';
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.json',
+               'assets/quay1-logo-white.png'];
 
 self.addEventListener('install', e => {
   self.skipWaiting();
