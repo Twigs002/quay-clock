@@ -343,6 +343,15 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
   letter-spacing: 0.5px;
 }
 .login .pin-area { width: 100%; max-width: 360px; }
+.login .login-user {
+  width: 100%; box-sizing: border-box;
+  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 12px; color: #fff; font-family: Montserrat;
+  font-size: 15px; font-weight: 600; padding: 12px 14px;
+  margin-bottom: 12px; outline: none;
+}
+.login .login-user::placeholder { color: rgba(255,255,255,0.55); }
+.login .login-user:focus { border-color: var(--yellow); background: rgba(255,255,255,0.18); }
 .login h2 {
   color: #fff; font-size: 17px; font-weight: 700; text-align: center; margin: 0 0 14px;
 }

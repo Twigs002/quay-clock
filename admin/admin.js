@@ -23,6 +23,7 @@ const state = {
   view: 'dashboard',
   loading: false,
   error: null,
+  loginUser: '',
   pinBuf: '',
   pinErr: false,
   data: {
@@ -40,28 +41,43 @@ const state = {
 const $root = document.getElementById('admin');
 
 // ───── BOOT ──────────────────────────────────────────────────────────
-function boot() {
+async function boot() {
   // Redirected standalone visits skip booting so the redirect message stays put.
   if (window.__quayAdminRedirect) return;
-  const stored = readSession();
-  if (stored && stored.id && stored.pin) {
-    state.admin = stored;
-    loadAll();
-  }
-  render();
 
-  // In embed mode, ask the parent dashboard to hand off the admin session.
-  // The parent is expected to reply with { type: 'quay-admin-session', admin: {...} }.
+  // Embed mode: ask the parent for a Supabase session BEFORE we render the gate.
   if (EMBED && window.parent && window.parent !== window) {
-    window.addEventListener('message', (ev) => {
+    window.addEventListener('message', async (ev) => {
       const m = ev.data;
-      if (!m || m.type !== 'quay-admin-session' || !m.admin || !m.admin.pin) return;
-      state.admin = m.admin;
-      writeSession(state.admin);
-      loadAll();
+      if (!m || m.type !== 'quay-supabase-session' || !m.session) return;
+      try {
+        await window.sb.auth.setSession({
+          access_token: m.session.access_token,
+          refresh_token: m.session.refresh_token,
+        });
+        const staff = await window.QD.loadSelfStaff();
+        if (staff && staff.is_admin) {
+          state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true };
+          writeSession(state.admin);
+          await loadAll();
+          render();
+        }
+      } catch (e) { /* fall through to local gate */ }
     });
     try { window.parent.postMessage({ type: 'quay-admin-ready' }, '*'); } catch {}
   }
+
+  // Try to restore a Supabase session (could be from the parent handoff a
+  // moment ago, or a prior visit).
+  try {
+    const staff = window.QD ? await window.QD.loadSelfStaff() : null;
+    if (staff && staff.is_admin) {
+      state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true };
+      writeSession(state.admin);
+      loadAll();
+    }
+  } catch {}
+  render();
 }
 function readSession() {
   try { return JSON.parse(sessionStorage.getItem(LS_KEY) || 'null'); }
@@ -73,14 +89,10 @@ function writeSession(v) {
 }
 
 // ───── API ───────────────────────────────────────────────────────────
-async function api(action, payload) {
-  const res = await fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action, ...payload }),
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  const data = await res.json();
+// Backed by Supabase via QD (window.QD). Returns { ok, ... } like before.
+async function api(action, payload = {}) {
+  if (!window.QD) throw new Error('Data layer not ready');
+  const data = await window.QD.call(action, payload);
   if (!data.ok) throw new Error(data.error || 'API error');
   return data;
 }
@@ -339,8 +351,11 @@ function wireShell() {
     state.view = b.dataset.view; render();
   }));
   const so = document.getElementById('signOut');
-  if (so) so.addEventListener('click', () => {
-    writeSession(null); state.admin = null; render();
+  if (so) so.addEventListener('click', async () => {
+    try { await window.QD.call('logout', {}); } catch {}
+    writeSession(null); state.admin = null;
+    state.pinBuf = ''; state.pinErr = false; state.error = null;
+    render();
   });
   const refresh = document.getElementById('refreshBtn');
   if (refresh) refresh.addEventListener('click', loadAll);
@@ -1268,14 +1283,18 @@ function statusLabel(s) {
   return 'Clocked out';
 }
 
-// ───── GATE (Admin PIN) ──────────────────────────────────────────────
+// ───── GATE (Admin sign-in: username + PIN) ──────────────────────────
 function renderGate() {
   const dots = [0,1,2,3].map(i => `<div class="dot ${i < state.pinBuf.length ? 'filled' : ''}"></div>`).join('');
+  const userPref = (typeof localStorage !== 'undefined' && localStorage.getItem('quay_admin_last_user')) || state.loginUser || '';
   return `<div class="gate">
     <div class="box ${state.pinErr ? 'pin-error' : ''}">
       <img src="../assets/quay1-logo-white.png" alt="Quay 1">
       <h2>Admin Dashboard</h2>
-      <div class="sub">Enter your admin PIN</div>
+      <div class="sub">Sign in with your admin username + PIN</div>
+      <input id="gateUser" class="gate-user" type="text" autocomplete="username"
+             autocapitalize="none" autocorrect="off"
+             placeholder="username" value="${escapeHtml(userPref)}">
       <div class="dots">${dots}</div>
       <div class="err">${state.error ? escapeHtml(state.error) : ''}</div>
       <div class="keypad">
@@ -1284,11 +1303,13 @@ function renderGate() {
         <button class="key" data-d="0">0</button>
         <button class="key alt" data-clear>Clear</button>
       </div>
-      <div class="foot">Roster row needs <b>admin = true</b> to unlock this view.</div>
+      <div class="foot">Only roster rows with <b>admin = true</b> can sign in.</div>
     </div>
   </div>`;
 }
 function wireGate() {
+  const u = document.getElementById('gateUser');
+  if (u) u.addEventListener('input', () => { state.loginUser = u.value; });
   document.querySelectorAll('.gate .key[data-d]').forEach(b => b.addEventListener('click', () => {
     if (state.pinBuf.length >= 4) return;
     state.pinBuf += b.dataset.d; state.pinErr = false; state.error = null; render();
@@ -1300,10 +1321,18 @@ function wireGate() {
   if (clr) clr.addEventListener('click', () => { state.pinBuf = ''; state.error = null; render(); });
 }
 async function submitAdminPin() {
+  const u = document.getElementById('gateUser');
+  if (u) state.loginUser = u.value;
+  const username = String(state.loginUser || '').trim().toLowerCase();
+  if (!username) {
+    state.pinErr = true; state.error = 'Enter your username first'; state.pinBuf = '';
+    setTimeout(() => { state.pinErr = false; render(); }, 600); render(); return;
+  }
   try {
-    const data = await api('admin_check', { pin: state.pinBuf });
-    state.admin = { ...data.admin, pin: state.pinBuf };
+    const data = await api('admin_check', { username, pin: state.pinBuf });
+    state.admin = { ...data.admin };
     writeSession(state.admin);
+    try { localStorage.setItem('quay_admin_last_user', username); } catch {}
     state.pinBuf = ''; state.error = null;
     await loadAll();
     render();

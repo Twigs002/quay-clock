@@ -302,6 +302,15 @@ td.dim { opacity: 0.55; }
 .gate img { width: 180px; margin: 0 auto 18px; display: block; }
 .gate h2 { color: #fff; font-size: 18px; font-weight: 800; margin-bottom: 4px; }
 .gate .sub { color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 500; margin-bottom: 22px; }
+.gate .gate-user {
+  width: 100%; box-sizing: border-box;
+  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 12px; color: #fff; font-family: Montserrat;
+  font-size: 15px; font-weight: 600; padding: 12px 14px;
+  margin-bottom: 14px; outline: none;
+}
+.gate .gate-user::placeholder { color: rgba(255,255,255,0.55); }
+.gate .gate-user:focus { border-color: var(--yellow); }
 .gate .dots { display: flex; gap: 14px; justify-content: center; margin-bottom: 18px; }
 .gate .dot { width: 14px; height: 14px; border-radius: 999px; border: 2px solid rgba(255,255,255,0.5); }
 .gate .dot.filled { background: var(--yellow); border-color: var(--yellow); }

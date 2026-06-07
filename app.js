@@ -19,6 +19,7 @@ const state = {
   tab: 'home',
   loading: false,
   error: null,
+  loginUser: (typeof localStorage !== 'undefined' && localStorage.getItem('quay_last_user')) || '',
   pinBuf: '',
   pinErr: false,
   // tab data caches
@@ -34,12 +35,21 @@ const state = {
 // ───── BOOT ──────────────────────────────────────────────────────────
 const $app = document.getElementById('app');
 
-function boot() {
-  const stored = readStored();
-  if (stored && stored.id) {
-    state.agent = stored;
-    state.tab = (location.hash || '#home').slice(1) || 'home';
-    loadTab(state.tab);
+async function boot() {
+  // Recover the supabase session first, then resolve our staff row.
+  try {
+    const staff = window.QD ? await window.QD.loadSelfStaff() : null;
+    if (staff && staff.active !== false) {
+      state.agent = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: !!staff.is_admin };
+      writeStored(state.agent);
+      state.tab = (location.hash || '#home').slice(1) || 'home';
+      loadTab(state.tab);
+    } else {
+      const stored = readStored();
+      if (stored && stored.id) writeStored(null);
+    }
+  } catch (e) {
+    // Network/auth hiccup — fall through to login screen.
   }
   render();
   window.addEventListener('hashchange', () => {
@@ -58,15 +68,11 @@ function writeStored(v) {
 }
 
 // ───── API ───────────────────────────────────────────────────────────
-async function api(action, payload) {
-  if (!APPS_SCRIPT_URL) throw new Error('SETUP_PENDING');
-  const res = await fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action, ...payload }),
-  });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  const data = await res.json();
+// Backed by Supabase via QD (window.QD). Returns the same {ok, ...} shape
+// the older Apps Script handlers used to, so call sites are unchanged.
+async function api(action, payload = {}) {
+  if (!window.QD) throw new Error('Data layer not ready');
+  const data = await window.QD.call(action, payload);
   if (!data.ok) throw new Error(data.error || 'API error');
   return data;
 }
@@ -348,7 +354,11 @@ function renderLogin() {
       <div class="tag">clock-in &amp; time tracking</div>
     </div>
     <div class="pin-area">
-      <h2>Enter your PIN</h2>
+      <h2>Sign in</h2>
+      <input id="loginUser" class="login-user" type="text" autocomplete="username"
+             inputmode="text" autocapitalize="none" autocorrect="off"
+             placeholder="username (e.g. thandi)" value="${escapeHtml(state.loginUser || '')}">
+      <div style="text-align:center;color:rgba(255,255,255,0.85);font-size:13px;font-weight:600;margin:4px 0 6px">PIN</div>
       <div class="pin-dots">${dots}</div>
       <div class="err">${state.error ? escapeHtml(state.error) : ''}</div>
       <div class="keypad">
@@ -362,6 +372,8 @@ function renderLogin() {
   </div>`;
 }
 function wireLogin() {
+  const u = document.getElementById('loginUser');
+  if (u) u.addEventListener('input', () => { state.loginUser = u.value; }); // silent — no rerender
   document.querySelectorAll('.key[data-d]').forEach(b => b.addEventListener('click', () => {
     if (state.pinBuf.length >= 4) return;
     state.pinBuf += b.dataset.d; state.pinErr = false; state.error = null;
@@ -376,10 +388,19 @@ function wireLogin() {
   if (clr) clr.addEventListener('click', () => { state.pinBuf = ''; state.error = null; render(); });
 }
 async function submitPin() {
+  // Pick up the latest username typed into the input (may not have triggered a render).
+  const u = document.getElementById('loginUser');
+  if (u) state.loginUser = u.value;
+  const username = String(state.loginUser || '').trim().toLowerCase();
+  if (!username) {
+    state.pinErr = true; state.error = 'Enter your username first'; state.pinBuf = '';
+    setTimeout(() => { state.pinErr = false; render(); }, 600); render(); return;
+  }
   try {
-    const data = await api('login', { pin: state.pinBuf });
+    const data = await api('login', { username, pin: state.pinBuf });
     state.agent = data.agent;
     writeStored(state.agent);
+    try { localStorage.setItem('quay_last_user', username); } catch {}
     state.pinBuf = ''; state.error = null;
     state.tab = 'home'; location.hash = '#home';
     await loadHome();
@@ -874,9 +895,11 @@ function wireTeam() {
   const exp = document.getElementById('teamExport');
   if (exp) exp.addEventListener('click', exportTeamCSV);
   const so = document.getElementById('signOut');
-  if (so) so.addEventListener('click', () => {
+  if (so) so.addEventListener('click', async () => {
+    try { await window.QD.call('logout', {}); } catch {}
     writeStored(null);
     state.agent = null; state.home = state.timesheet = state.leave = state.team = null;
+    state.pinBuf = ''; state.pinErr = false; state.error = null;
     location.hash = '';
     render();
   });
