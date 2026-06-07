@@ -945,7 +945,8 @@ async function saveEvent(idx, row) {
       agent_id: e.agentId,
       ts: ev.ts,
       new_ts: newTs,
-      action: newAction,
+      // `dir` so the in/out value doesn't clobber the outer dispatcher key.
+      dir: newAction,
       note: newNote,
     });
     // mutate locally so the next save uses the new ts
@@ -983,7 +984,7 @@ async function addEvent() {
   if (!date || !time) { e.error = 'Pick a valid date and time'; render(); return; }
   const ts = new Date(date + 'T' + time + ':00').toISOString();
   try {
-    await api('event_add', { admin_pin: state.admin.pin, agent_id: e.agentId, ts, action, note });
+    await api('event_add', { admin_pin: state.admin.pin, agent_id: e.agentId, ts, dir: action, note });
     e.events.push({ ts, id: e.agentId, name: e.agentName, action, note, loc: '', duration_hrs: null });
     e.events.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
     e.adding = false; e.error = '';

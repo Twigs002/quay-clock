@@ -119,7 +119,9 @@ function meAction_(body) {
 
 function clockAction_(body, e) {
   var id     = String(body.agent_id || '').trim();
-  var action = String(body.action || '').toLowerCase();
+  // The "in"/"out" direction lives in `dir`. (Older clients sent it as
+  // `action`, which collided with the outer dispatcher key — read both.)
+  var action = String(body.dir || body.action || '').toLowerCase();
   var note   = String(body.note || '').trim();
   var loc    = String(body.loc  || '').trim();
   if (!id || (action !== 'in' && action !== 'out')) {
@@ -284,7 +286,8 @@ function eventAddAction_(body) {
   var admin = findAdminByPin_(String(body.admin_pin || '').trim());
   if (!admin) return { ok: false, error: 'Admin PIN required' };
   var id = String(body.agent_id || '').trim();
-  var action = String(body.action || '').toLowerCase();
+  // Direction lives in `dir`; older clients posted it as `action` — read either.
+  var action = String(body.dir || body.action || '').toLowerCase();
   var ts = toIsoOrEmpty_(body.ts);
   if (!id || !ts || (action !== 'in' && action !== 'out')) {
     return { ok: false, error: 'Need agent_id, ts, action(in|out)' };
@@ -317,8 +320,10 @@ function eventUpdateAction_(body) {
         if (!nts) return { ok: false, error: 'Invalid new_ts' };
         sh.getRange(i + 1, hdr.ts + 1).setValue(nts);
       }
-      if (body.action != null && hdr.action != null) {
-        var a = String(body.action).toLowerCase();
+      // Direction (in/out) lives in `dir`; older clients sent `action` — accept both.
+      var newDir = body.dir != null ? body.dir : body.action;
+      if (newDir != null && hdr.action != null) {
+        var a = String(newDir).toLowerCase();
         if (a !== 'in' && a !== 'out') return { ok: false, error: 'action must be in|out' };
         sh.getRange(i + 1, hdr.action + 1).setValue(a);
       }
