@@ -508,7 +508,9 @@ async function submitClock(action) {
   try {
     await api('clock', {
       agent_id: state.agent.id,
-      action,
+      // Use `dir` so the inner field doesn't clobber the outer `action`
+      // (which is the dispatcher key on the Apps Script side).
+      dir: action,
       note: action === 'in' ? note : '',
       loc: DEFAULT_LOC,
     });
