@@ -40,11 +40,13 @@ button { cursor: pointer; }
 }
 html.embed, html.embed body { background: var(--paper); }
 
-/* embed-mode top nav (replaces sidebar) */
+/* embed-mode top nav (replaces sidebar)
+   Uses brand blue (#3D5BA6) so the embedded admin matches the
+   dashboard's sidebar colour seamlessly. */
 .topnav {
   display: flex; align-items: center; gap: 4px;
   padding: 8px 16px;
-  background: var(--side); color: #fff;
+  background: var(--blue); color: #fff;
   border-bottom: 1px solid rgba(255,255,255,0.05);
   flex-wrap: wrap;
 }

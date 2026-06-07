@@ -29,7 +29,6 @@ const state = {
     team: null,          // [{ id, name, role, status, cin, loc, note, todayHrs }]
     summary: null,       // [{ id, name, hours, sessions }] (weekly)
     leave: null,         // [{ id, agent_name, type, dates, days, reason, status }]
-    locations: null,     // [{ name, address, lat, lng, radius_m }]
     weekEvents: null,    // weekly events for timesheet view
     roster: null,        // for staff directory + counts
   },
@@ -162,18 +161,16 @@ async function loadAll() {
     const now = new Date();
     const from = startOfWeek(now).toISOString();
     const to = endOfWeek(now).toISOString();
-    const [team, summary, leave, locs, roster, events] = await Promise.all([
+    const [team, summary, leave, roster, events] = await Promise.all([
       api('team_today', {}),
       api('summary', { from, to }),
       api('leave_list', {}),
-      api('locations', {}),
       api('roster', {}),
       api('events', { from, to }),
     ]);
     state.data.team = team.team || [];
     state.data.summary = summary.summary || [];
     state.data.leave = (leave.leave || []).map(l => ({ ...l, dates: fmtDateRange(l.start_date, l.end_date) }));
-    state.data.locations = locs.locations || [];
     state.data.roster = roster.roster || [];
     state.data.weekEvents = events.events || [];
   } catch (e) {
@@ -206,7 +203,6 @@ function renderSidebar() {
     ['timesheets','clipboard','Timesheets'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
-    ['locations','map','Locations'],
   ];
   return `<div class="sidebar">
     <div class="logo"><img src="../assets/quay1-logo-white.png" alt="Quay 1"></div>
@@ -237,7 +233,6 @@ function renderTopNav() {
     ['timesheets','clipboard','Timesheets'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
-    ['locations','map','Locations'],
   ];
   return `<div class="topnav">
     ${items.map(([k, ic, label]) => `
@@ -261,7 +256,6 @@ const TITLES = {
   timesheets: ['Timesheets', 'Review & approve hours'],
   leave:      ['Requests',   'Leave & shift-change requests'],
   team:       ['Team',       'Staff directory & status'],
-  locations:  ['Locations',  'Office geofences'],
 };
 function renderTopbar() {
   const [t, sub] = TITLES[state.view] || ['', ''];
@@ -332,7 +326,6 @@ function renderView() {
     case 'timesheets': return renderTimesheets();
     case 'leave':      return renderLeave();
     case 'team':       return renderTeam();
-    case 'locations':  return renderLocations();
     default:           return '';
   }
 }
@@ -926,34 +919,11 @@ async function submitAddStaff() {
   }
 }
 
-// ───── LOCATIONS ─────────────────────────────────────────────────────
-function renderLocations() {
-  const locs = state.data.locations || [];
-  const team = state.data.team || [];
-  return `<div class="loc-grid">
-    ${locs.map(s => {
-      const here = team.filter(t => t.status === 'in' && (t.loc || '').toLowerCase() === s.name.toLowerCase()).length;
-      return `<div class="card loc-card">
-        <div class="loc-map">
-          <div class="pin"><div class="outer"><div class="inner">${icon('pin', 17, '#fff')}</div></div></div>
-          <span class="here">${here} on site</span>
-        </div>
-        <div class="loc-info">
-          <div class="name">${escapeHtml(s.name)}</div>
-          <div class="addr">${escapeHtml(s.address || '')}</div>
-          <div class="geo">${icon('map', 15, 'var(--blue)')} Geofence radius · ${s.radius_m ? s.radius_m + ' m' : '—'}</div>
-        </div>
-      </div>`;
-    }).join('')}
-  </div>`;
-}
-
 // ───── EXPORTS ───────────────────────────────────────────────────────
 function exportCurrent() {
   if (state.view === 'dashboard' || state.view === 'team') exportTeamCSV();
   else if (state.view === 'timesheets') exportTimesheetsCSV();
   else if (state.view === 'leave') exportLeaveCSV();
-  else if (state.view === 'locations') exportLocationsCSV();
 }
 function exportTeamCSV() {
   const team = state.data.team || [];
@@ -989,12 +959,6 @@ function exportLeaveCSV() {
   const rows = [['ID', 'Submitted', 'Employee', 'Type', 'Start', 'End', 'Days', 'Status', 'Decided by', 'Reason']];
   leave.forEach(l => rows.push([l.id, l.ts, l.agent_name, l.type, l.start_date, l.end_date, l.days, l.status, l.decided_by, l.reason]));
   downloadCSV(`leave-${new Date().toISOString().slice(0,10)}.csv`, rows);
-}
-function exportLocationsCSV() {
-  const locs = state.data.locations || [];
-  const rows = [['Name', 'Address', 'Lat', 'Lng', 'Radius (m)']];
-  locs.forEach(l => rows.push([l.name, l.address, l.lat, l.lng, l.radius_m]));
-  downloadCSV(`locations.csv`, rows);
 }
 function statusLabel(s) {
   if (s === 'in')    return 'On the clock';
