@@ -11,6 +11,12 @@ const APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw3g6cdmfIbWC6TVSybVk5CECKhnSBneDuWGzM4krxcTFgOhS7Ef4InD6F1x9llnl27AA/exec';
 const LS_KEY = 'quay_admin_session_v2';
 
+// Embed mode: when this page is iframed from another surface (e.g. the
+// quay-dashboard-v2 "Clocks" tab), the sidebar is replaced with a slim
+// horizontal top-nav so the parent's chrome stays clean.
+const EMBED = new URLSearchParams(location.search).get('embed') === '1';
+if (EMBED) document.documentElement.classList.add('embed');
+
 // ───── STATE ─────────────────────────────────────────────────────────
 const state = {
   admin: null,           // { id, name, role, ... } + pin (kept in memory for write actions)
@@ -33,12 +39,27 @@ const $root = document.getElementById('admin');
 
 // ───── BOOT ──────────────────────────────────────────────────────────
 function boot() {
+  // Redirected standalone visits skip booting so the redirect message stays put.
+  if (window.__quayAdminRedirect) return;
   const stored = readSession();
   if (stored && stored.id && stored.pin) {
     state.admin = stored;
     loadAll();
   }
   render();
+
+  // In embed mode, ask the parent dashboard to hand off the admin session.
+  // The parent is expected to reply with { type: 'quay-admin-session', admin: {...} }.
+  if (EMBED && window.parent && window.parent !== window) {
+    window.addEventListener('message', (ev) => {
+      const m = ev.data;
+      if (!m || m.type !== 'quay-admin-session' || !m.admin || !m.admin.pin) return;
+      state.admin = m.admin;
+      writeSession(state.admin);
+      loadAll();
+    });
+    try { window.parent.postMessage({ type: 'quay-admin-ready' }, '*'); } catch {}
+  }
 }
 function readSession() {
   try { return JSON.parse(sessionStorage.getItem(LS_KEY) || 'null'); }
@@ -165,8 +186,8 @@ async function loadAll() {
 // ───── RENDER ────────────────────────────────────────────────────────
 function render() {
   if (!state.admin) { $root.innerHTML = renderGate(); wireGate(); return; }
-  $root.innerHTML = `<div class="app">
-    ${renderSidebar()}
+  $root.innerHTML = `<div class="app ${EMBED ? 'app-embed' : ''}">
+    ${EMBED ? renderTopNav() : renderSidebar()}
     <div class="pane">
       ${renderTopbar()}
       <div class="body" id="adminBody">
@@ -206,6 +227,31 @@ function renderSidebar() {
       </div>
     </div>
     <button class="signout" id="signOut">Sign out</button>
+  </div>`;
+}
+
+// ── Top nav (embed mode) ─────────────────────────────────────────────
+function renderTopNav() {
+  const items = [
+    ['dashboard','grid','Dashboard'],
+    ['timesheets','clipboard','Timesheets'],
+    ['leave','calendar','Requests'],
+    ['team','users','Team'],
+    ['locations','map','Locations'],
+  ];
+  return `<div class="topnav">
+    ${items.map(([k, ic, label]) => `
+      <button class="nav-item ${k === state.view ? 'on' : ''}" data-view="${k}">
+        ${icon(ic, 18, k === state.view ? 'var(--yellow)' : 'rgba(255,255,255,0.6)', 1.9)}
+        <span>${label}</span>
+      </button>
+    `).join('')}
+    <div class="topnav-spacer"></div>
+    <div class="me-mini" title="${escapeHtml(state.admin.name)}">
+      <div class="av" style="background:${avColor(0)};width:30px;height:30px;font-size:11.5px">${initials(state.admin.name)}</div>
+      <span>${escapeHtml(state.admin.name)}</span>
+    </div>
+    <button class="signout-mini" id="signOut" title="Sign out">${icon('chevron', 16, 'rgba(255,255,255,0.6)')}</button>
   </div>`;
 }
 

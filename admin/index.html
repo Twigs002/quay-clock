@@ -9,7 +9,32 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Permanent+Marker&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="admin.css">
-<title>Quay 1 · Admin Dashboard</title>
+<title>Quay 1 · Admin</title>
+<script>
+  // Admin is no longer a standalone destination — it's embedded into
+  // quay-dashboard-v2's "Clocks" tab. Direct visits get redirected unless
+  // ?embed=1 is set (which is how the dashboard iframes this page).
+  (function () {
+    var qs = new URLSearchParams(location.search);
+    if (qs.get('embed') !== '1') {
+      window.__quayAdminRedirect = true; // tells admin.js to NOT boot
+      var DASH = 'https://twigs002.github.io/quay-dashboard-v2/#clocks';
+      document.addEventListener('DOMContentLoaded', function () {
+        document.getElementById('admin').innerHTML =
+          '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;' +
+          'padding:40px;font-family:Montserrat,Arial,sans-serif;color:#1A2540;text-align:center">' +
+          '<div style="max-width:440px"><h1 style="font-size:22px;font-weight:800;margin:0 0 10px">' +
+          'Admin lives in the dashboard now</h1>' +
+          '<p style="font-size:14px;line-height:1.55;color:#6A7390;margin:0 0 20px">' +
+          'The standalone admin page was retired so the Engine Room manager has one place ' +
+          'to work from. Redirecting to the dashboard’s <b>Clocks</b> tab.</p>' +
+          '<a href="' + DASH + '" style="display:inline-block;padding:12px 22px;border-radius:12px;' +
+          'background:#FDC503;color:#1A2540;font-weight:800;text-decoration:none">Open dashboard →</a></div></div>';
+        setTimeout(function () { location.replace(DASH); }, 1800);
+      });
+    }
+  })();
+</script>
 </head>
 <body>
 <div id="admin">
