@@ -410,4 +410,51 @@ td.dim { opacity: 0.55; }
   .team-grid, .loc-grid { grid-template-columns: 1fr; }
   .topbar .search { display: none; }
   .body { padding: 18px; }
+  /* embed-mode top-nav scrolls horizontally on narrow screens */
+  .topnav {
+    flex-wrap: nowrap; overflow-x: auto;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    padding: 6px 10px;
+  }
+  .topnav::-webkit-scrollbar { display: none; }
+  .topnav .nav-item {
+    flex: 0 0 auto; padding: 7px 11px; font-size: 12.5px;
+  }
+  .topnav .nav-item span { display: inline; }
+  .topnav .me-mini { display: none; }
+  .topnav-spacer { display: none; }
+  .topnav .signout-mini { margin-left: auto; }
+}
+
+/* phone-tight ────────────────────────────────────────────────────── */
+@media (max-width: 540px) {
+  .body { padding: 14px; }
+  .topbar { padding: 14px 16px; gap: 10px; flex-wrap: wrap; }
+  .topbar h1 { font-size: 17px; }
+  .topbar .right { margin-left: 0; gap: 8px; flex-wrap: wrap; }
+  .topbar .search { display: none; }
+  .topbar .clock { display: none; }
+  .topbar .right .btn { padding: 7px 10px; font-size: 12px; }
+
+  /* stat cards stack 1-wide on phone */
+  .stat-row { flex-direction: column; }
+  .stat-card { width: 100%; }
+
+  /* dashboard "Who's working now" table — let the parent scroll */
+  table { font-size: 12.5px; min-width: 540px; }
+  .card-head { padding: 14px 14px 10px; flex-wrap: wrap; }
+  .card-head h3 { font-size: 14.5px; }
+  td { padding: 12px 12px; }
+  th { padding: 10px 12px; }
+
+  /* tables get a horizontal scroll wrapper */
+  .card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* modal goes full-width */
+  .modal { width: calc(100vw - 16px); max-height: 92vh; border-radius: 14px; }
+  .modal-head, .modal-body { padding-left: 18px !important; padding-right: 18px !important; }
+  .field-row { flex-direction: column; }
+
+  /* event editor rows already break at 720px — tighten labels */
+  .evrow select, .evrow input { font-size: 12.5px; padding: 7px 9px; }
 }
