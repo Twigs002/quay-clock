@@ -1,187 +1,499 @@
 /**
- * Quay 1 — Clock In/Out backend (Google Apps Script Web App)
- * =============================================================
- * Backs the quay-clock PWA. Accepts POST {action, ...} requests from the
- * browser (text/plain to avoid CORS preflight) and reads/writes a Google
- * Sheet with two tabs:
+ * Quay 1 — Clock In/Out + Leave backend (Google Apps Script Web App, v2)
+ * ======================================================================
+ * Backs the quay-clock PWA + admin dashboard. Accepts POST {action, ...}
+ * (text/plain to dodge CORS preflight) and reads/writes a Google Sheet
+ * with four tabs:
  *
- *   tab "Roster"  columns:  id | name | team | pin | active
- *   tab "Events"  columns:  ts | id | name | action | duration_hrs | source_ip
+ *   tab "Roster"     id | name | role | team | email | pin | active | admin
+ *   tab "Events"     ts | id | name | action | note | location | duration_hrs
+ *   tab "Leave"      id | ts | agent_id | agent_name | type | start_date | end_date | days | reason | status | decided_by | decided_ts
+ *   tab "Locations"  name | address | lat | lng | radius_m
  *
- * SETUP (see apps_script/SETUP.md for screenshots):
- *  1. Create the sheet with the two tabs (sample first row included).
- *  2. Extensions → Apps Script → paste this whole file → Save.
- *  3. Deploy → New deployment → Type "Web app".
- *  4. Execute as: Me. Who has access: Anyone. Deploy → copy the URL.
- *  5. Paste the URL into quay-clock/app.js (APPS_SCRIPT_URL constant).
+ * Missing tabs are auto-created with the expected header row so setup is
+ * fault-tolerant.
+ *
+ * SETUP (see apps_script/SETUP.md):
+ *  1. Open the sheet → Extensions → Apps Script → paste this file → Save.
+ *  2. Deploy → New deployment → Web app, Execute as Me, Anyone access.
+ *  3. Copy the URL → paste into quay-clock/app.js (APPS_SCRIPT_URL).
+ *
+ * Actions:
+ *   roster                            → list of agents (no pin returned)
+ *   login {pin}                       → verify pin, return agent profile
+ *   me {agent_id}                     → today's hours, week hours, last event/note
+ *   clock {agent_id, action, note?, loc?} → append event (in/out)
+ *   events {from?, to?, agent_id?}    → raw events for a window (default: this week)
+ *   summary {from?, to?, agent_id?}   → per-agent total hours for a window
+ *   team_today                        → live status for every active agent
+ *   leave_list {agent_id?}            → all leave requests (or one agent's)
+ *   leave_create {agent_id, type, start, end, reason} → append a request
+ *   leave_decide {id, status, admin_pin}              → Approve/Decline
+ *   admin_check {pin}                 → verify admin pin
+ *   locations                         → list of offices/geofences
  */
 
-// ------------ CONFIG -------------------------------------------------------
-// Optional: hard-code the sheet ID to avoid `getActiveSpreadsheet` ambiguity
-// when the script is later moved to a stand-alone project. Leave blank to use
-// the currently-bound sheet (i.e. the one Extensions→Apps Script was opened
-// from).
-var SHEET_ID = '';
+var SHEET_ID = ''; // leave blank to use the bound sheet
+var TAB_ROSTER    = 'Roster';
+var TAB_EVENTS    = 'Events';
+var TAB_LEAVE     = 'Leave';
+var TAB_LOCATIONS = 'Locations';
 
-var TAB_ROSTER = 'Roster';
-var TAB_EVENTS = 'Events';
-
-
-// ------------ ENTRY POINTS --------------------------------------------------
+// --- entry points ----------------------------------------------------------
 function doPost(e) {
   try {
     var body = (e && e.postData && e.postData.contents) ? JSON.parse(e.postData.contents) : {};
-    var action = body.action;
-    if (action === 'roster') return reply({ ok: true, roster: getRoster() });
-    if (action === 'clock')  return reply(handleClock(body, e));
-    return reply({ ok: false, error: 'Unknown action: ' + action });
+    return reply(dispatch_(body.action, body, e));
   } catch (err) {
-    return reply({ ok: false, error: String(err) });
+    return reply({ ok: false, error: String(err && err.message || err) });
   }
 }
 
 function doGet(e) {
-  // Convenience: GET /?action=roster works too (browser sanity check).
-  if (e && e.parameter && e.parameter.action === 'roster') {
-    return reply({ ok: true, roster: getRoster() });
+  if (e && e.parameter && e.parameter.action) {
+    return reply(dispatch_(e.parameter.action, e.parameter, e));
   }
-  return reply({ ok: true, hint: 'POST {action: "roster" | "clock", ...}' });
+  return reply({ ok: true, hint: 'POST {action, ...}. v2.' });
 }
 
-
-// ------------ HANDLERS ------------------------------------------------------
-function getRoster() {
-  var sh = sheet_(TAB_ROSTER);
-  var rows = sh.getDataRange().getValues();
-  if (rows.length < 2) return [];
-  var hdr = headerIndex_(rows[0]);
-  var roster = [];
-  for (var i = 1; i < rows.length; i++) {
-    var r = rows[i];
-    var id   = String(r[hdr.id] || '').trim();
-    var name = String(r[hdr.name] || '').trim();
-    if (!id || !name) continue;
-    if (hdr.active != null && String(r[hdr.active]).toLowerCase() === 'false') continue;
-    var status = lastStatusFor_(id);
-    roster.push({
-      id: id,
-      name: name,
-      team: hdr.team != null ? r[hdr.team] : '',
-      status: status.status,
-      lastIn:  status.lastIn,
-      lastOut: status.lastOut
-    });
+function dispatch_(action, body, e) {
+  switch (action) {
+    case 'roster':       return { ok: true, roster: getRoster_() };
+    case 'login':        return loginAction_(body);
+    case 'me':           return meAction_(body);
+    case 'clock':        return clockAction_(body, e);
+    case 'events':       return { ok: true, events: getEvents_(body.from, body.to, body.agent_id) };
+    case 'summary':      return { ok: true, summary: getSummary_(body.from, body.to, body.agent_id) };
+    case 'team_today':   return { ok: true, team: getTeamToday_() };
+    case 'leave_list':   return { ok: true, leave: getLeave_(body.agent_id) };
+    case 'leave_create': return leaveCreateAction_(body);
+    case 'leave_decide': return leaveDecideAction_(body);
+    case 'admin_check':  return adminCheckAction_(body);
+    case 'locations':    return { ok: true, locations: getLocations_() };
   }
-  // Sort: clocked-in agents first, then alphabetical
-  roster.sort(function (a, b) {
-    if (a.status !== b.status) return a.status === 'in' ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-  return roster;
+  return { ok: false, error: 'Unknown action: ' + String(action) };
 }
 
-function handleClock(body, e) {
-  var id     = String(body.agentId || '').trim();
-  var pin    = String(body.pin || '').trim();
-  var action = body.action; // 'in' or 'out'
-  if (!id || !pin || !action) return { ok: false, error: 'Missing agentId/pin/action' };
+// --- actions ---------------------------------------------------------------
+function loginAction_(body) {
+  var pin = String(body.pin || '').trim();
+  if (!pin) return { ok: false, error: 'Missing PIN' };
+  var agent = findAgentByPin_(pin);
+  if (!agent) return { ok: false, error: 'PIN not recognised' };
+  return { ok: true, agent: publicAgent_(agent) };
+}
 
-  // Look up the agent + verify PIN
-  var sh = sheet_(TAB_ROSTER);
-  var rows = sh.getDataRange().getValues();
-  var hdr = headerIndex_(rows[0]);
-  var found = null;
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][hdr.id]).trim() === id) { found = rows[i]; break; }
+function meAction_(body) {
+  var id = String(body.agent_id || '').trim();
+  if (!id) return { ok: false, error: 'Missing agent_id' };
+  var agent = findAgentById_(id);
+  if (!agent) return { ok: false, error: 'Unknown agent' };
+  var st = lastStatusFor_(id);
+  var w = weekRange_();
+  var today = todayRange_();
+  var weekHrs = sumHoursForAgent_(id, w.from, w.to);
+  var todayHrs = sumHoursForAgent_(id, today.from, today.to);
+  return {
+    ok: true,
+    agent: publicAgent_(agent),
+    status: st.status,
+    lastIn: st.lastIn,
+    lastOut: st.lastOut,
+    lastNote: st.lastNote,
+    lastLoc: st.lastLoc,
+    todayHrs: todayHrs,
+    weekHrs: weekHrs,
+    weekTarget: 40,
+  };
+}
+
+function clockAction_(body, e) {
+  var id     = String(body.agent_id || '').trim();
+  var action = String(body.action || '').toLowerCase();
+  var note   = String(body.note || '').trim();
+  var loc    = String(body.loc  || '').trim();
+  if (!id || (action !== 'in' && action !== 'out')) {
+    return { ok: false, error: 'Missing agent_id or action(in|out)' };
   }
-  if (!found) return { ok: false, error: 'Unknown agent' };
-  if (String(found[hdr.pin]).trim() !== pin) return { ok: false, error: 'Invalid PIN' };
+  var agent = findAgentById_(id);
+  if (!agent) return { ok: false, error: 'Unknown agent' };
 
-  // Sanity: don't allow double clock-in / double clock-out
   var st = lastStatusFor_(id);
   if (action === 'in'  && st.status === 'in')  return { ok: false, error: 'Already clocked in at ' + st.lastIn };
   if (action === 'out' && st.status === 'out') return { ok: false, error: 'You are not clocked in.' };
+  if (action === 'in'  && !note) return { ok: false, error: 'A shift note is required to clock in.' };
 
-  // Append the event
-  var ev = sheet_(TAB_EVENTS);
+  var sh = sheet_(TAB_EVENTS);
   var now = new Date();
   var durationHrs = '';
   if (action === 'out' && st.lastIn) {
     durationHrs = ((now - new Date(st.lastIn)) / 3.6e6).toFixed(3);
   }
-  ev.appendRow([
+  sh.appendRow([
     now.toISOString(),
     id,
-    String(found[hdr.name]).trim(),
+    agent.name,
     action,
+    note,
+    loc,
     durationHrs,
-    (e && e.parameter && e.parameter.ip) || ''
   ]);
-
   return {
     ok: true,
     event: {
       ts: now.toISOString(),
       action: action,
-      duration: durationHrs ? humanDuration_(durationHrs) : ''
-    }
+      note: note,
+      loc: loc,
+      duration: durationHrs ? humanDuration_(durationHrs) : '',
+    },
   };
 }
 
+function leaveCreateAction_(body) {
+  var id = String(body.agent_id || '').trim();
+  var type = String(body.type || '').trim();
+  var start = String(body.start || '').trim();
+  var end = String(body.end || start).trim();
+  var reason = String(body.reason || '').trim();
+  if (!id || !type || !start) return { ok: false, error: 'Missing agent_id/type/start' };
+  var agent = findAgentById_(id);
+  if (!agent) return { ok: false, error: 'Unknown agent' };
+  var sh = sheet_(TAB_LEAVE);
+  var rid = 'L' + Date.now().toString(36).toUpperCase();
+  var days = dayDiff_(start, end);
+  sh.appendRow([rid, new Date().toISOString(), id, agent.name, type, start, end, days, reason, 'Pending', '', '']);
+  return { ok: true, id: rid };
+}
 
-// ------------ HELPERS -------------------------------------------------------
+function leaveDecideAction_(body) {
+  var rid = String(body.id || '').trim();
+  var status = String(body.status || '').trim();
+  var adminPin = String(body.admin_pin || '').trim();
+  if (!rid || (status !== 'Approved' && status !== 'Declined')) {
+    return { ok: false, error: 'Missing id / status(Approved|Declined)' };
+  }
+  var admin = findAdminByPin_(adminPin);
+  if (!admin) return { ok: false, error: 'Admin PIN required' };
+
+  var sh = sheet_(TAB_LEAVE);
+  var rows = sh.getDataRange().getValues();
+  var hdr = headerIndex_(rows[0]);
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][hdr.id]).trim() === rid) {
+      sh.getRange(i + 1, hdr.status + 1).setValue(status);
+      sh.getRange(i + 1, hdr.decided_by + 1).setValue(admin.name);
+      sh.getRange(i + 1, hdr.decided_ts + 1).setValue(new Date().toISOString());
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'Request not found' };
+}
+
+function adminCheckAction_(body) {
+  var pin = String(body.pin || '').trim();
+  var admin = findAdminByPin_(pin);
+  if (!admin) return { ok: false, error: 'Invalid admin PIN' };
+  return { ok: true, admin: publicAgent_(admin) };
+}
+
+// --- readers ---------------------------------------------------------------
+function getRoster_() {
+  var rows = sheet_(TAB_ROSTER).getDataRange().getValues();
+  if (rows.length < 2) return [];
+  var hdr = headerIndex_(rows[0]);
+  var out = [];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    var id = String(r[hdr.id] || '').trim();
+    var name = String(r[hdr.name] || '').trim();
+    if (!id || !name) continue;
+    if (hdr.active != null && String(r[hdr.active]).toLowerCase() === 'false') continue;
+    var st = lastStatusFor_(id);
+    out.push({
+      id: id, name: name,
+      role: hdr.role != null ? String(r[hdr.role] || '') : '',
+      team: hdr.team != null ? String(r[hdr.team] || '') : '',
+      email: hdr.email != null ? String(r[hdr.email] || '') : '',
+      admin: hdr.admin != null ? (String(r[hdr.admin]).toLowerCase() === 'true') : false,
+      status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
+      lastNote: st.lastNote, lastLoc: st.lastLoc,
+    });
+  }
+  out.sort(function (a, b) {
+    if (a.status !== b.status) return a.status === 'in' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return out;
+}
+
+function getEvents_(from, to, agentId) {
+  var w = parseRange_(from, to);
+  var rows = sheet_(TAB_EVENTS).getDataRange().getValues();
+  if (rows.length < 2) return [];
+  var hdr = headerIndex_(rows[0]);
+  var out = [];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    var ts = isoString_(r[hdr.ts]);
+    if (!ts) continue;
+    if (w.from && ts < w.from) continue;
+    if (w.to && ts > w.to) continue;
+    var id = String(r[hdr.id] || '').trim();
+    if (agentId && id !== agentId) continue;
+    out.push({
+      ts: ts, id: id,
+      name: String(r[hdr.name] || ''),
+      action: String(r[hdr.action] || '').toLowerCase(),
+      note: hdr.note != null ? String(r[hdr.note] || '') : '',
+      loc: hdr.location != null ? String(r[hdr.location] || '') : '',
+      duration_hrs: r[hdr.duration_hrs] === '' || r[hdr.duration_hrs] == null
+        ? null : Number(r[hdr.duration_hrs]),
+    });
+  }
+  return out;
+}
+
+function getSummary_(from, to, agentId) {
+  var events = getEvents_(from, to, agentId);
+  var byAgent = {};
+  events.forEach(function (e) {
+    if (!byAgent[e.id]) byAgent[e.id] = { id: e.id, name: e.name, hours: 0, sessions: 0 };
+    if (e.action === 'out' && e.duration_hrs != null && !isNaN(e.duration_hrs)) {
+      byAgent[e.id].hours += e.duration_hrs;
+      byAgent[e.id].sessions += 1;
+    }
+  });
+  return Object.keys(byAgent).map(function (k) {
+    return { id: byAgent[k].id, name: byAgent[k].name,
+      hours: +byAgent[k].hours.toFixed(3), sessions: byAgent[k].sessions };
+  });
+}
+
+function getTeamToday_() {
+  var roster = getRoster_();
+  var today = todayRange_();
+  return roster.map(function (a) {
+    return {
+      id: a.id, name: a.name, role: a.role, team: a.team, email: a.email,
+      status: a.status,
+      cin: a.status === 'in' ? fmtClockTime_(a.lastIn) : '',
+      loc: a.lastLoc || '',
+      note: a.status === 'in' ? a.lastNote : '',
+      todayHrs: sumHoursForAgent_(a.id, today.from, today.to)
+        + (a.status === 'in' && a.lastIn
+            ? (new Date() - new Date(a.lastIn)) / 3.6e6 : 0),
+    };
+  });
+}
+
+function getLeave_(agentId) {
+  var sh = sheet_(TAB_LEAVE);
+  var rows = sh.getDataRange().getValues();
+  if (rows.length < 2) return [];
+  var hdr = headerIndex_(rows[0]);
+  var out = [];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    var id = String(r[hdr.id] || '').trim();
+    if (!id) continue;
+    var aid = String(r[hdr.agent_id] || '').trim();
+    if (agentId && aid !== agentId) continue;
+    out.push({
+      id: id,
+      ts: isoString_(r[hdr.ts]),
+      agent_id: aid,
+      agent_name: String(r[hdr.agent_name] || ''),
+      type: String(r[hdr.type] || ''),
+      start_date: isoDate_(r[hdr.start_date]),
+      end_date: isoDate_(r[hdr.end_date]),
+      days: Number(r[hdr.days] || 0),
+      reason: String(r[hdr.reason] || ''),
+      status: String(r[hdr.status] || 'Pending'),
+      decided_by: hdr.decided_by != null ? String(r[hdr.decided_by] || '') : '',
+      decided_ts: hdr.decided_ts != null ? isoString_(r[hdr.decided_ts]) : '',
+    });
+  }
+  return out.sort(function (a, b) { return (b.ts || '').localeCompare(a.ts || ''); });
+}
+
+function getLocations_() {
+  var sh = sheet_(TAB_LOCATIONS);
+  var rows = sh.getDataRange().getValues();
+  if (rows.length < 2) return defaultLocations_();
+  var hdr = headerIndex_(rows[0]);
+  var out = [];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    var name = String(r[hdr.name] || '').trim();
+    if (!name) continue;
+    out.push({
+      name: name,
+      address: String(r[hdr.address] || ''),
+      lat: r[hdr.lat] === '' ? null : Number(r[hdr.lat]),
+      lng: r[hdr.lng] === '' ? null : Number(r[hdr.lng]),
+      radius_m: r[hdr.radius_m] === '' ? null : Number(r[hdr.radius_m]),
+    });
+  }
+  return out.length ? out : defaultLocations_();
+}
+
+// --- helpers ---------------------------------------------------------------
 function sheet_(name) {
   var ss = SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(name);
   if (sh) return sh;
-  // Auto-create with the expected header row so setup is fault-tolerant.
   sh = ss.insertSheet(name);
-  if (name === TAB_EVENTS) {
-    sh.appendRow(['ts', 'id', 'name', 'action', 'duration_hrs', 'source_ip']);
-    sh.setFrozenRows(1);
-  } else if (name === TAB_ROSTER) {
-    sh.appendRow(['id', 'name', 'team', 'pin', 'active']);
-    sh.setFrozenRows(1);
-  }
+  var header;
+  if (name === TAB_ROSTER)         header = ['id','name','role','team','email','pin','active','admin'];
+  else if (name === TAB_EVENTS)    header = ['ts','id','name','action','note','location','duration_hrs'];
+  else if (name === TAB_LEAVE)     header = ['id','ts','agent_id','agent_name','type','start_date','end_date','days','reason','status','decided_by','decided_ts'];
+  else if (name === TAB_LOCATIONS) header = ['name','address','lat','lng','radius_m'];
+  if (header) { sh.appendRow(header); sh.setFrozenRows(1); }
   return sh;
 }
+
 function headerIndex_(row) {
   var ix = {};
   for (var i = 0; i < row.length; i++) ix[String(row[i]).toLowerCase().trim()] = i;
   return ix;
 }
 
-// Walk Events bottom-up to find this agent's most recent in/out
+function findAgentById_(id) {
+  var rows = sheet_(TAB_ROSTER).getDataRange().getValues();
+  var hdr = headerIndex_(rows[0]);
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][hdr.id]).trim() === id) return rowToAgent_(rows[i], hdr);
+  }
+  return null;
+}
+function findAgentByPin_(pin) {
+  var rows = sheet_(TAB_ROSTER).getDataRange().getValues();
+  var hdr = headerIndex_(rows[0]);
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][hdr.pin]).trim() === pin
+        && String(rows[i][hdr.active]).toLowerCase() !== 'false') {
+      return rowToAgent_(rows[i], hdr);
+    }
+  }
+  return null;
+}
+function findAdminByPin_(pin) {
+  var a = findAgentByPin_(pin);
+  return (a && a.admin) ? a : null;
+}
+function rowToAgent_(r, hdr) {
+  return {
+    id: String(r[hdr.id] || '').trim(),
+    name: String(r[hdr.name] || '').trim(),
+    role: hdr.role != null ? String(r[hdr.role] || '') : '',
+    team: hdr.team != null ? String(r[hdr.team] || '') : '',
+    email: hdr.email != null ? String(r[hdr.email] || '') : '',
+    pin: String(r[hdr.pin] || '').trim(),
+    admin: hdr.admin != null ? (String(r[hdr.admin]).toLowerCase() === 'true') : false,
+  };
+}
+function publicAgent_(a) {
+  return { id: a.id, name: a.name, role: a.role, team: a.team, email: a.email, admin: !!a.admin };
+}
+
 function lastStatusFor_(id) {
   var ev = sheet_(TAB_EVENTS);
   var rows = ev.getDataRange().getValues();
-  if (rows.length < 2) return { status: 'out', lastIn: '', lastOut: '' };
+  if (rows.length < 2) return { status: 'out', lastIn: '', lastOut: '', lastNote: '', lastLoc: '' };
   var hdr = headerIndex_(rows[0]);
-  var lastIn = '', lastOut = '';
+  var lastIn = '', lastOut = '', lastNote = '', lastLoc = '';
   for (var i = rows.length - 1; i >= 1; i--) {
     var r = rows[i];
     if (String(r[hdr.id]).trim() !== id) continue;
     var act = String(r[hdr.action]).toLowerCase();
-    if (act === 'in'  && !lastIn)  lastIn  = r[hdr.ts];
-    if (act === 'out' && !lastOut) lastOut = r[hdr.ts];
+    if (act === 'in' && !lastIn) {
+      lastIn = isoString_(r[hdr.ts]);
+      lastNote = hdr.note != null ? String(r[hdr.note] || '') : '';
+      lastLoc  = hdr.location != null ? String(r[hdr.location] || '') : '';
+    }
+    if (act === 'out' && !lastOut) lastOut = isoString_(r[hdr.ts]);
     if (lastIn && lastOut) break;
   }
-  // 'in' if the most recent event is in
   var status = 'out';
   if (lastIn && (!lastOut || new Date(lastIn) > new Date(lastOut))) status = 'in';
-  return { status: status, lastIn: isoString_(lastIn), lastOut: isoString_(lastOut) };
+  return { status: status, lastIn: lastIn, lastOut: lastOut, lastNote: lastNote, lastLoc: lastLoc };
 }
 
+function sumHoursForAgent_(id, fromIso, toIso) {
+  var events = getEvents_(fromIso, toIso, id);
+  var total = 0;
+  events.forEach(function (e) {
+    if (e.action === 'out' && e.duration_hrs != null && !isNaN(e.duration_hrs)) total += e.duration_hrs;
+  });
+  return +total.toFixed(3);
+}
+
+// --- dates -----------------------------------------------------------------
 function isoString_(v) {
   if (!v) return '';
   if (v instanceof Date) return v.toISOString();
   return String(v);
+}
+function isoDate_(v) {
+  if (!v) return '';
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  var d = new Date(s);
+  if (!isNaN(d)) return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return s;
+}
+function fmtClockTime_(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
 }
 function humanDuration_(hrsStr) {
   var hrs = parseFloat(hrsStr) || 0;
   var totalMin = Math.round(hrs * 60);
   return Math.floor(totalMin / 60) + 'h ' + (totalMin % 60) + 'm';
 }
+function parseRange_(from, to) {
+  var f = from ? toIsoOrEmpty_(from) : '';
+  var t = to   ? toIsoOrEmpty_(to)   : '';
+  if (!f && !t) { var w = weekRange_(); return w; }
+  return { from: f, to: t };
+}
+function toIsoOrEmpty_(v) {
+  if (!v) return '';
+  var d = (v instanceof Date) ? v : new Date(v);
+  return isNaN(d) ? '' : d.toISOString();
+}
+function weekRange_() {
+  // Monday 00:00 → Sunday 23:59:59
+  var now = new Date();
+  var day = (now.getDay() + 6) % 7; // 0 = Mon
+  var mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day, 0, 0, 0);
+  var sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6, 23, 59, 59);
+  return { from: mon.toISOString(), to: sun.toISOString() };
+}
+function todayRange_() {
+  var now = new Date();
+  var s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  var e = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  return { from: s.toISOString(), to: e.toISOString() };
+}
+function dayDiff_(start, end) {
+  var s = new Date(start); var e = new Date(end || start);
+  if (isNaN(s) || isNaN(e)) return 1;
+  return Math.max(1, Math.round((e - s) / 86400000) + 1);
+}
+
+function defaultLocations_() {
+  return [
+    { name:'V&A Waterfront Office', address:'19 Dock Rd, V&A Waterfront, Cape Town', lat:-33.9036, lng:18.4194, radius_m:150 },
+    { name:'Sea Point Branch',      address:'120 Main Rd, Sea Point, Cape Town',     lat:-33.9249, lng:18.3886, radius_m:120 },
+    { name:'Camps Bay Showroom',    address:'42 Victoria Rd, Camps Bay, Cape Town',  lat:-33.9527, lng:18.3776, radius_m:100 },
+    { name:'Remote / Field',        address:'Geofence disabled — clock in anywhere', lat:null,     lng:null,    radius_m:null },
+  ];
+}
+
 function reply(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
