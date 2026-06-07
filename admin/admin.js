@@ -567,7 +567,7 @@ function renderTeam() {
       </div>
       <div style="margin-top:14px">${tagFor(s.status)}</div>
       <div class="meta">
-        <div class="li">${icon('mail', 14, 'var(--muted)')}${escapeHtml(s.email || '—')}</div>
+        <div class="li">${icon('users', 14, 'var(--muted)')}@${escapeHtml(s.id || '—')}</div>
         <div class="li">${icon('pin', 14, 'var(--muted)')}${escapeHtml(s.lastLoc || '—')}</div>
       </div>
     </div>`).join('')}

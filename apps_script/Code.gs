@@ -5,7 +5,7 @@
  * (text/plain to dodge CORS preflight) and reads/writes a Google Sheet
  * with four tabs:
  *
- *   tab "Roster"     id | name | role | team | email | pin | active | admin
+ *   tab "Roster"     id | name | role | team | pin | active | admin
  *   tab "Events"     ts | id | name | action | note | location | duration_hrs
  *   tab "Leave"      id | ts | agent_id | agent_name | type | start_date | end_date | days | reason | status | decided_by | decided_ts
  *   tab "Locations"  name | address | lat | lng | radius_m
@@ -214,7 +214,6 @@ function getRoster_() {
       id: id, name: name,
       role: hdr.role != null ? String(r[hdr.role] || '') : '',
       team: hdr.team != null ? String(r[hdr.team] || '') : '',
-      email: hdr.email != null ? String(r[hdr.email] || '') : '',
       admin: hdr.admin != null ? (String(r[hdr.admin]).toLowerCase() === 'true') : false,
       status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
       lastNote: st.lastNote, lastLoc: st.lastLoc,
@@ -275,7 +274,7 @@ function getTeamToday_() {
   var today = todayRange_();
   return roster.map(function (a) {
     return {
-      id: a.id, name: a.name, role: a.role, team: a.team, email: a.email,
+      id: a.id, name: a.name, role: a.role, team: a.team,
       status: a.status,
       cin: a.status === 'in' ? fmtClockTime_(a.lastIn) : '',
       loc: a.lastLoc || '',
@@ -345,7 +344,7 @@ function sheet_(name) {
   if (sh) return sh;
   sh = ss.insertSheet(name);
   var header;
-  if (name === TAB_ROSTER)         header = ['id','name','role','team','email','pin','active','admin'];
+  if (name === TAB_ROSTER)         header = ['id','name','role','team','pin','active','admin'];
   else if (name === TAB_EVENTS)    header = ['ts','id','name','action','note','location','duration_hrs'];
   else if (name === TAB_LEAVE)     header = ['id','ts','agent_id','agent_name','type','start_date','end_date','days','reason','status','decided_by','decided_ts'];
   else if (name === TAB_LOCATIONS) header = ['name','address','lat','lng','radius_m'];
@@ -388,13 +387,12 @@ function rowToAgent_(r, hdr) {
     name: String(r[hdr.name] || '').trim(),
     role: hdr.role != null ? String(r[hdr.role] || '') : '',
     team: hdr.team != null ? String(r[hdr.team] || '') : '',
-    email: hdr.email != null ? String(r[hdr.email] || '') : '',
     pin: String(r[hdr.pin] || '').trim(),
     admin: hdr.admin != null ? (String(r[hdr.admin]).toLowerCase() === 'true') : false,
   };
 }
 function publicAgent_(a) {
-  return { id: a.id, name: a.name, role: a.role, team: a.team, email: a.email, admin: !!a.admin };
+  return { id: a.id, name: a.name, role: a.role, team: a.team, admin: !!a.admin };
 }
 
 function lastStatusFor_(id) {
