@@ -38,8 +38,8 @@ Admin Web  ─┴────► Google Apps Script Web App
    create the sheet, paste the script, deploy as a Web App, copy the URL.
 2. **Wire the URL** into `app.js` (`APPS_SCRIPT_URL` constant) and into
    `admin/admin.js` (`APPS_SCRIPT_URL` constant).
-3. **Roster** — fill in the `Roster` tab (id, name, role, team, email,
-   pin, active, admin).
+3. **Roster** — fill in the `Roster` tab (id, name, role, team, pin,
+   active, admin). The `id` is the username — short, lowercase, no spaces.
 4. **Deploy** — push to GitHub. Pages auto-serves at the repo URL.
 
 ---

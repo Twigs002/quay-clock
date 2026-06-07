@@ -7,16 +7,15 @@ tabs with the right header row, but you'll need to add staff to `Roster`
 yourself. The four tabs:
 
 ### Tab: `Roster`
-| id | name | role | team | email | pin | active | admin |
-|----|------|------|------|-------|-----|--------|-------|
-| thandi | Thandi Mokoena | Sales Agent | Sales | thandi@quay1.co.za | 1234 | true | false |
-| rashied | Rashied Adams | Office Manager | Admin | rashied@quay1.co.za | 9999 | true | true |
+| id | name | role | team | pin | active | admin |
+|----|------|------|------|-----|--------|-------|
+| thandi | Thandi Mokoena | Sales Agent | Sales | 1234 | true | false |
+| rashied | Rashied Adams | Office Manager | Admin | 9999 | true | true |
 
-- `id` — short slug used internally (lowercase, no spaces).
+- `id` — the **username**. Short slug, lowercase, no spaces. Shown in the staff directory.
 - `name` — display name.
 - `role` — shown in admin/team views.
 - `team` — optional grouping.
-- `email` — for the staff directory.
 - `pin` — 4-digit login PIN. **Each person gets their own.**
 - `active` — `false` hides without losing history.
 - `admin` — `true` unlocks the admin dashboard for that person's PIN.

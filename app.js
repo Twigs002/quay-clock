@@ -15,7 +15,7 @@ const DEFAULT_LOC = 'V&A Waterfront Office';
 
 // ───── STATE ─────────────────────────────────────────────────────────
 const state = {
-  agent: null,           // { id, name, role, team, email, admin }
+  agent: null,           // { id, name, role, team, admin }
   tab: 'home',
   loading: false,
   error: null,
