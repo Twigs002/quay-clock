@@ -40,6 +40,12 @@
 <div id="admin">
   <div class="bootloader">Loading admin…</div>
 </div>
+<script src="../quay-config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+  window.sb = window.supabase.createClient(window.QUAY_CFG.SUPABASE_URL, window.QUAY_CFG.SUPABASE_ANON_KEY);
+</script>
+<script src="../quay-data.js"></script>
 <script src="admin.js"></script>
 </body>
 </html>
