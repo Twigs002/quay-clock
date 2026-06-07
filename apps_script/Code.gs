@@ -31,6 +31,11 @@
  *   leave_decide {id, status, admin_pin}              → Approve/Decline
  *   admin_check {pin}                 → verify admin pin
  *   locations                         → list of offices/geofences
+ *   roster_add {admin_pin, id, name, role?, team?, pin, active?, admin?} → append staff row
+ *   roster_set_active {admin_pin, id, active}         → toggle active
+ *   event_add    {admin_pin, agent_id, ts, action, note?, loc?, duration_hrs?} → append a manual event
+ *   event_update {admin_pin, agent_id, ts, new_ts?, note?, loc?, action?, duration_hrs?} → edit by composite key
+ *   event_delete {admin_pin, agent_id, ts}            → delete by composite key
  */
 
 var SHEET_ID = ''; // leave blank to use the bound sheet
@@ -70,6 +75,11 @@ function dispatch_(action, body, e) {
     case 'leave_decide': return leaveDecideAction_(body);
     case 'admin_check':  return adminCheckAction_(body);
     case 'locations':    return { ok: true, locations: getLocations_() };
+    case 'roster_add':        return rosterAddAction_(body);
+    case 'roster_set_active': return rosterSetActiveAction_(body);
+    case 'event_add':         return eventAddAction_(body);
+    case 'event_update':      return eventUpdateAction_(body);
+    case 'event_delete':      return eventDeleteAction_(body);
   }
   return { ok: false, error: 'Unknown action: ' + String(action) };
 }
@@ -179,11 +189,14 @@ function leaveDecideAction_(body) {
   var sh = sheet_(TAB_LEAVE);
   var rows = sh.getDataRange().getValues();
   var hdr = headerIndex_(rows[0]);
+  if (hdr.id == null || hdr.status == null) {
+    return { ok: false, error: 'Leave sheet missing required columns (id/status). Check the header row.' };
+  }
   for (var i = 1; i < rows.length; i++) {
     if (String(rows[i][hdr.id]).trim() === rid) {
       sh.getRange(i + 1, hdr.status + 1).setValue(status);
-      sh.getRange(i + 1, hdr.decided_by + 1).setValue(admin.name);
-      sh.getRange(i + 1, hdr.decided_ts + 1).setValue(new Date().toISOString());
+      if (hdr.decided_by != null) sh.getRange(i + 1, hdr.decided_by + 1).setValue(admin.name);
+      if (hdr.decided_ts != null) sh.getRange(i + 1, hdr.decided_ts + 1).setValue(new Date().toISOString());
       return { ok: true };
     }
   }
@@ -197,6 +210,156 @@ function adminCheckAction_(body) {
   return { ok: true, admin: publicAgent_(admin) };
 }
 
+function rosterAddAction_(body) {
+  var admin = findAdminByPin_(String(body.admin_pin || '').trim());
+  if (!admin) return { ok: false, error: 'Admin PIN required' };
+
+  var id   = slugify_(body.id || body.name);
+  var name = String(body.name || '').trim();
+  var pin  = normalisePin_(body.pin);
+  if (!id)   return { ok: false, error: 'A username (id) is required' };
+  if (!name) return { ok: false, error: 'Name is required' };
+  if (!pin || pin.length < 4) return { ok: false, error: 'PIN must be 4 digits' };
+
+  var role   = String(body.role   || '').trim();
+  var team   = String(body.team   || '').trim();
+  var active = body.active == null ? 'true' : (isFalse_(body.active) ? 'false' : 'true');
+  var isAdm  = body.admin === true || String(body.admin).toLowerCase() === 'true' ? 'true' : 'false';
+
+  var sh = sheet_(TAB_ROSTER);
+  var rows = sh.getDataRange().getValues();
+  var hdr = headerIndex_(rows[0]);
+  if (hdr.id == null || hdr.name == null || hdr.pin == null) {
+    return { ok: false, error: 'Roster sheet missing required columns (id/name/pin).' };
+  }
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][hdr.id]).trim().toLowerCase() === id.toLowerCase()) {
+      return { ok: false, error: 'Username "' + id + '" is already taken.' };
+    }
+    if (normalisePin_(rows[i][hdr.pin]) === pin) {
+      return { ok: false, error: 'That PIN is already in use — pick a different one.' };
+    }
+  }
+  // Build the new row in the order of the existing header so we tolerate
+  // sheets where the user has re-ordered columns.
+  var newRow = [];
+  for (var c = 0; c < rows[0].length; c++) {
+    var col = String(rows[0][c]).toLowerCase().trim();
+    if (col === 'id')          newRow.push(id);
+    else if (col === 'name')   newRow.push(name);
+    else if (col === 'role')   newRow.push(role);
+    else if (col === 'team')   newRow.push(team);
+    else if (col === 'pin')    newRow.push(pin);
+    else if (col === 'active') newRow.push(active);
+    else if (col === 'admin')  newRow.push(isAdm);
+    else newRow.push('');
+  }
+  sh.appendRow(newRow);
+  return { ok: true, agent: { id: id, name: name, role: role, team: team, admin: isAdm === 'true' } };
+}
+
+function rosterSetActiveAction_(body) {
+  var admin = findAdminByPin_(String(body.admin_pin || '').trim());
+  if (!admin) return { ok: false, error: 'Admin PIN required' };
+  var id = String(body.id || '').trim();
+  if (!id) return { ok: false, error: 'Missing id' };
+  var active = isFalse_(body.active) ? 'false' : 'true';
+  var sh = sheet_(TAB_ROSTER);
+  var rows = sh.getDataRange().getValues();
+  var hdr = headerIndex_(rows[0]);
+  if (hdr.id == null || hdr.active == null) {
+    return { ok: false, error: 'Roster missing id/active columns.' };
+  }
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][hdr.id]).trim() === id) {
+      sh.getRange(i + 1, hdr.active + 1).setValue(active);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'Staff member not found' };
+}
+
+// ── manual event editing (admin) ────────────────────────────────────
+function eventAddAction_(body) {
+  var admin = findAdminByPin_(String(body.admin_pin || '').trim());
+  if (!admin) return { ok: false, error: 'Admin PIN required' };
+  var id = String(body.agent_id || '').trim();
+  var action = String(body.action || '').toLowerCase();
+  var ts = toIsoOrEmpty_(body.ts);
+  if (!id || !ts || (action !== 'in' && action !== 'out')) {
+    return { ok: false, error: 'Need agent_id, ts, action(in|out)' };
+  }
+  var agent = findAgentById_(id);
+  if (!agent) return { ok: false, error: 'Unknown agent' };
+  var sh = sheet_(TAB_EVENTS);
+  sh.appendRow([
+    ts, id, agent.name, action,
+    String(body.note || ''), String(body.loc || ''),
+    body.duration_hrs != null && body.duration_hrs !== '' ? Number(body.duration_hrs) : '',
+  ]);
+  return { ok: true, event: { ts: ts, agent_id: id, action: action } };
+}
+
+function eventUpdateAction_(body) {
+  var admin = findAdminByPin_(String(body.admin_pin || '').trim());
+  if (!admin) return { ok: false, error: 'Admin PIN required' };
+  var id = String(body.agent_id || '').trim();
+  var ts = String(body.ts || '').trim();
+  if (!id || !ts) return { ok: false, error: 'Need agent_id + ts to identify the row' };
+  var sh = sheet_(TAB_EVENTS);
+  var rows = sh.getDataRange().getValues();
+  var hdr = headerIndex_(rows[0]);
+  if (hdr.ts == null || hdr.id == null) return { ok: false, error: 'Events sheet missing ts/id columns' };
+  for (var i = 1; i < rows.length; i++) {
+    if (isoString_(rows[i][hdr.ts]) === ts && String(rows[i][hdr.id]).trim() === id) {
+      if (body.new_ts != null) {
+        var nts = toIsoOrEmpty_(body.new_ts);
+        if (!nts) return { ok: false, error: 'Invalid new_ts' };
+        sh.getRange(i + 1, hdr.ts + 1).setValue(nts);
+      }
+      if (body.action != null && hdr.action != null) {
+        var a = String(body.action).toLowerCase();
+        if (a !== 'in' && a !== 'out') return { ok: false, error: 'action must be in|out' };
+        sh.getRange(i + 1, hdr.action + 1).setValue(a);
+      }
+      if (body.note != null && hdr.note != null) sh.getRange(i + 1, hdr.note + 1).setValue(String(body.note));
+      if (body.loc  != null && hdr.location != null) sh.getRange(i + 1, hdr.location + 1).setValue(String(body.loc));
+      if (body.duration_hrs != null && hdr.duration_hrs != null) {
+        sh.getRange(i + 1, hdr.duration_hrs + 1)
+          .setValue(body.duration_hrs === '' ? '' : Number(body.duration_hrs));
+      }
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'Event not found' };
+}
+
+function eventDeleteAction_(body) {
+  var admin = findAdminByPin_(String(body.admin_pin || '').trim());
+  if (!admin) return { ok: false, error: 'Admin PIN required' };
+  var id = String(body.agent_id || '').trim();
+  var ts = String(body.ts || '').trim();
+  if (!id || !ts) return { ok: false, error: 'Need agent_id + ts' };
+  var sh = sheet_(TAB_EVENTS);
+  var rows = sh.getDataRange().getValues();
+  var hdr = headerIndex_(rows[0]);
+  if (hdr.ts == null || hdr.id == null) return { ok: false, error: 'Events sheet missing ts/id columns' };
+  for (var i = 1; i < rows.length; i++) {
+    if (isoString_(rows[i][hdr.ts]) === ts && String(rows[i][hdr.id]).trim() === id) {
+      sh.deleteRow(i + 1);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'Event not found' };
+}
+
+function slugify_(raw) {
+  return String(raw || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+}
+
 // --- readers ---------------------------------------------------------------
 function getRoster_() {
   var rows = sheet_(TAB_ROSTER).getDataRange().getValues();
@@ -208,7 +371,7 @@ function getRoster_() {
     var id = String(r[hdr.id] || '').trim();
     var name = String(r[hdr.name] || '').trim();
     if (!id || !name) continue;
-    if (hdr.active != null && String(r[hdr.active]).toLowerCase() === 'false') continue;
+    if (hdr.active != null && isFalse_(r[hdr.active])) continue;
     var st = lastStatusFor_(id);
     out.push({
       id: id, name: name,
@@ -270,18 +433,28 @@ function getSummary_(from, to, agentId) {
 }
 
 function getTeamToday_() {
+  // One pass over Events to compute today's hours per agent; one pass over
+  // Roster to format. Was O(N²) before (lastStatusFor_ scanned per agent).
   var roster = getRoster_();
   var today = todayRange_();
+  var todayEvents = getEvents_(today.from, today.to);
+  var hrsByAgent = {};
+  todayEvents.forEach(function (e) {
+    if (e.action === 'out' && e.duration_hrs != null && !isNaN(e.duration_hrs)) {
+      hrsByAgent[e.id] = (hrsByAgent[e.id] || 0) + e.duration_hrs;
+    }
+  });
+  var nowMs = Date.now();
   return roster.map(function (a) {
+    var liveBonus = (a.status === 'in' && a.lastIn)
+      ? Math.max(0, (nowMs - new Date(a.lastIn).getTime()) / 3.6e6) : 0;
     return {
       id: a.id, name: a.name, role: a.role, team: a.team,
       status: a.status,
       cin: a.status === 'in' ? fmtClockTime_(a.lastIn) : '',
       loc: a.lastLoc || '',
       note: a.status === 'in' ? a.lastNote : '',
-      todayHrs: sumHoursForAgent_(a.id, today.from, today.to)
-        + (a.status === 'in' && a.lastIn
-            ? (new Date() - new Date(a.lastIn)) / 3.6e6 : 0),
+      todayHrs: +(((hrsByAgent[a.id] || 0) + liveBonus)).toFixed(3),
     };
   });
 }
@@ -361,6 +534,7 @@ function headerIndex_(row) {
 function findAgentById_(id) {
   var rows = sheet_(TAB_ROSTER).getDataRange().getValues();
   var hdr = headerIndex_(rows[0]);
+  if (hdr.id == null) return null;
   for (var i = 1; i < rows.length; i++) {
     if (String(rows[i][hdr.id]).trim() === id) return rowToAgent_(rows[i], hdr);
   }
@@ -369,13 +543,29 @@ function findAgentById_(id) {
 function findAgentByPin_(pin) {
   var rows = sheet_(TAB_ROSTER).getDataRange().getValues();
   var hdr = headerIndex_(rows[0]);
+  if (hdr.pin == null) return null; // safer than scanning `undefined` cells
+  var needle = normalisePin_(pin);
   for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][hdr.pin]).trim() === pin
-        && String(rows[i][hdr.active]).toLowerCase() !== 'false') {
-      return rowToAgent_(rows[i], hdr);
-    }
+    if (normalisePin_(rows[i][hdr.pin]) !== needle) continue;
+    if (hdr.active != null && isFalse_(rows[i][hdr.active])) continue;
+    return rowToAgent_(rows[i], hdr);
   }
   return null;
+}
+// Sheets stores numeric PINs as numbers; "0123" becomes 123. Normalise both
+// sides to a left-padded 4-digit string so login is robust to cell formatting.
+function normalisePin_(v) {
+  if (v == null) return '';
+  var s = String(v).trim();
+  if (s === '') return '';
+  // strip any non-digit, then left-pad to 4 (the expected PIN length)
+  var digits = s.replace(/[^0-9]/g, '');
+  return digits.length >= 4 ? digits : ('0000' + digits).slice(-4);
+}
+function isFalse_(v) {
+  if (v === false) return true;
+  var s = String(v).trim().toLowerCase();
+  return s === 'false' || s === 'no' || s === '0';
 }
 function findAdminByPin_(pin) {
   var a = findAgentByPin_(pin);
@@ -478,9 +668,19 @@ function todayRange_() {
   return { from: s.toISOString(), to: e.toISOString() };
 }
 function dayDiff_(start, end) {
+  // Counts working days (Mon-Fri) only, inclusive of both endpoints.
   var s = new Date(start); var e = new Date(end || start);
   if (isNaN(s) || isNaN(e)) return 1;
-  return Math.max(1, Math.round((e - s) / 86400000) + 1);
+  if (e < s) { var t = s; s = e; e = t; }
+  var days = 0;
+  var cur = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+  var stop = new Date(e.getFullYear(), e.getMonth(), e.getDate());
+  while (cur <= stop) {
+    var d = cur.getDay();
+    if (d !== 0 && d !== 6) days++; // skip Sun(0) + Sat(6)
+    cur.setDate(cur.getDate() + 1);
+  }
+  return Math.max(1, days);
 }
 
 function defaultLocations_() {

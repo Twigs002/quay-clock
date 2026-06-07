@@ -1,7 +1,7 @@
 /* Quay 1 — Signal-language PWA · vanilla JS, no build step
  * ----------------------------------------------------------------------
  * Per-user app: log in once with your PIN, stay signed in.
- * Tabs: Home · Timesheet · Leave · Team.
+ * Tabs: Home · Timesheet · Requests · Team.
  * Backend: see apps_script/Code.gs (v2).
  */
 (function () {
@@ -27,7 +27,7 @@ const state = {
   leave: null,           // { balances, requests }
   team: null,            // [ { id, name, role, status, cin, loc, note } ]
   // UI flags
-  sheet: null,           // { type: 'note' | 'leave', ... }
+  sheet: null,           // { type: 'note' | 'request', ... }
   toast: null,
 };
 
@@ -119,7 +119,8 @@ function csvEscape(s) {
   return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 }
 function downloadCSV(filename, rows) {
-  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\n');
+  // UTF-8 BOM so Excel renders diacritics; CRLF so rows split on Windows.
+  const csv = '﻿' + rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -205,44 +206,49 @@ async function loadTeam() {
 }
 
 function buildTimesheet(events, now) {
-  // Pair in/out within the week (Mon-Sun).
+  // Pair in/out within the week (Mon-Sun). Hours are attributed to the
+  // day the shift ENDED (so a 23:30→02:00 shift counts on the OUT day),
+  // matching how Apps Script computes duration_hrs at clock-out time.
   const sow = startOfWeek(now);
   const entries = [];
   const byDay = [0,0,0,0,0,0,0]; // Mon..Sun
   let openIn = null;
-  events
-    .slice()
-    .sort((a,b) => (a.ts || '').localeCompare(b.ts || ''))
-    .forEach(e => {
-      if (e.action === 'in') { openIn = e; return; }
-      if (e.action === 'out' && openIn) {
-        const inDate = new Date(openIn.ts);
-        const outDate = new Date(e.ts);
-        const dayIdx = (inDate.getDay() + 6) % 7;
-        const hrs = e.duration_hrs != null ? e.duration_hrs : (outDate - inDate) / 3.6e6;
-        if (dayIdx >= 0 && dayIdx < 7) byDay[dayIdx] += hrs;
-        entries.push({
-          day: inDate.toLocaleDateString('en-GB', { weekday: 'short' }),
-          date: inDate.getDate(),
-          monthShort: inDate.toLocaleDateString('en-GB', { month: 'short' }),
-          tin: fmtTime(openIn.ts),
-          tout: fmtTime(e.ts),
-          hrs: fmtHM(hrs),
-          hrsNum: hrs,
-          note: openIn.note || '',
-          loc: openIn.loc || '',
-          live: false,
-        });
-        openIn = null;
-      }
+  const sorted = events.slice().sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  sorted.forEach(e => {
+    if (e.action === 'in') { openIn = e; return; }
+    if (e.action !== 'out') return;
+    const outDate = new Date(e.ts);
+    const inDate = openIn ? new Date(openIn.ts) : null;
+    const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
+      ? Number(e.duration_hrs)
+      : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+    const refDate = inDate || outDate;
+    // Attribute to OUT day so the bar chart reflects when the work finished.
+    const outIdx = (outDate.getDay() + 6) % 7;
+    if (outIdx >= 0 && outIdx < 7 && hrs > 0) byDay[outIdx] += hrs;
+    entries.push({
+      sortAt: refDate.getTime(),
+      day: refDate.toLocaleDateString('en-GB', { weekday: 'short' }),
+      date: refDate.getDate(),
+      monthShort: refDate.toLocaleDateString('en-GB', { month: 'short' }),
+      tin: openIn ? fmtTime(openIn.ts) : '—',
+      tout: fmtTime(e.ts),
+      hrs: fmtHM(hrs),
+      hrsNum: hrs,
+      note: openIn ? (openIn.note || '') : (e.note || ''),
+      loc: openIn ? (openIn.loc || '') : (e.loc || ''),
+      live: false,
     });
-  // If there's an open clock-in (still on the clock), add it as live
+    openIn = null;
+  });
+  // If there's an open clock-in (still on the clock), add it as live.
   if (openIn) {
     const inDate = new Date(openIn.ts);
     const dayIdx = (inDate.getDay() + 6) % 7;
     const hrs = (Date.now() - inDate.getTime()) / 3.6e6;
     if (dayIdx >= 0 && dayIdx < 7) byDay[dayIdx] += hrs;
     entries.unshift({
+      sortAt: inDate.getTime() + 1e13, // pin live row to top
       day: inDate.toLocaleDateString('en-GB', { weekday: 'short' }),
       date: inDate.getDate(),
       monthShort: inDate.toLocaleDateString('en-GB', { month: 'short' }),
@@ -255,7 +261,7 @@ function buildTimesheet(events, now) {
       live: true,
     });
   }
-  entries.sort((a,b) => b.date - a.date);
+  entries.sort((a, b) => b.sortAt - a.sortAt); // newest first; handles month boundaries
   const total = byDay.reduce((s,v) => s+v, 0);
   const max = Math.max(8, ...byDay);
   const todayIdx = (now.getDay() + 6) % 7;
@@ -313,7 +319,7 @@ function renderTabBar() {
   const tabs = [
     ['home','Home','home'],
     ['timesheet','Timesheet','clipboard'],
-    ['leave','Leave','calendar'],
+    ['leave','Requests','calendar'],
     ['team','Team','users'],
   ];
   return `<div class="tabbar">
@@ -489,8 +495,17 @@ function openNoteSheet() {
 }
 
 async function submitClock(action) {
+  const note = state.sheet && state.sheet.value ? state.sheet.value.trim() : (state.home && state.home.lastNote) || '';
+  // Mark sheet busy; update CTA in place so we don't lose textarea focus mid-flow.
+  if (state.sheet) {
+    state.sheet.busy = true;
+    state.sheet.error = '';
+    const go = document.getElementById('sheetGo');
+    if (go) { go.classList.add('disabled'); go.classList.remove('ok'); go.innerHTML = 'Clocking in…'; }
+    const eb = document.getElementById('sheetErr');
+    if (eb) { eb.style.display = 'none'; eb.textContent = ''; }
+  }
   try {
-    const note = state.sheet && state.sheet.value ? state.sheet.value.trim() : (state.home && state.home.lastNote) || '';
     await api('clock', {
       agent_id: state.agent.id,
       action,
@@ -502,8 +517,23 @@ async function submitClock(action) {
     await loadHome();
     render();
   } catch (e) {
-    state.error = e.message;
-    render();
+    const msg = String(e.message || e);
+    if (state.sheet) {
+      state.sheet.busy = false;
+      state.sheet.error = msg;
+      const eb = document.getElementById('sheetErr');
+      const go = document.getElementById('sheetGo');
+      if (eb) { eb.textContent = msg; eb.style.display = 'block'; }
+      const ok = note.length > 0;
+      if (go) {
+        go.classList.toggle('ok', ok);
+        go.classList.toggle('disabled', !ok);
+        go.innerHTML = ok ? 'CONFIRM &amp; CLOCK IN' : 'Add a note to continue';
+      }
+    } else {
+      state.error = msg;
+      render();
+    }
   }
 }
 
@@ -511,13 +541,15 @@ async function submitClock(action) {
 function renderSheet() {
   if (!state.sheet) return '';
   if (state.sheet.type === 'note') return renderNoteSheet();
-  if (state.sheet.type === 'leave') return renderLeaveSheet();
+  if (state.sheet.type === 'request') return renderLeaveSheet();
   return '';
 }
 
 function renderNoteSheet() {
   const v = state.sheet.value || '';
   const ok = v.trim().length > 0;
+  const err = state.sheet.error || '';
+  const busy = state.sheet.busy || false;
   const quick = ['At the office desk', 'Client viewing', 'Property inspection', 'Off-site meeting'];
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
@@ -534,8 +566,9 @@ function renderNoteSheet() {
       <div class="chips">
         ${quick.map(q => `<button class="chip" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}
       </div>
-      <button class="btn-cta ${ok ? 'ok' : 'disabled'}" id="sheetGo">
-        ${ok ? 'CONFIRM &amp; CLOCK IN' : 'Add a note to continue'}
+      <div id="sheetErr" class="banner" style="${err ? '' : 'display:none'};margin-top:14px;margin-bottom:0">${escapeHtml(err)}</div>
+      <button class="btn-cta ${ok && !busy ? 'ok' : 'disabled'}" id="sheetGo">
+        ${busy ? 'Clocking in…' : (ok ? 'CONFIRM &amp; CLOCK IN' : 'Add a note to continue')}
       </button>
     </div>
   </div>`;
@@ -543,6 +576,9 @@ function renderNoteSheet() {
 
 function renderLeaveSheet() {
   const s = state.sheet;
+  const choice = s.type_choice || 'Annual leave';
+  const isShift = choice === 'Shift change';
+  const types = ['Annual leave', 'Sick leave', 'Family responsibility', 'Shift change'];
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
     <div class="sheet">
@@ -550,20 +586,18 @@ function renderLeaveSheet() {
       <div style="display:flex;align-items:center;gap:9px">
         ${icon('calendar', 22, 'var(--blue)')}
         <div>
-          <h2>Request time off</h2>
-          <div style="font-size:12.5px;font-weight:600;color:var(--muted);margin-top:1px">Picked dates and a reason</div>
+          <h2>Submit a request</h2>
+          <div style="font-size:12.5px;font-weight:600;color:var(--muted);margin-top:1px">Leave or shift change · admin reviews</div>
         </div>
       </div>
-      <select id="leaveType" style="margin-top:14px">
-        <option ${s.type==='Annual leave' ? 'selected':''}>Annual leave</option>
-        <option ${s.type==='Sick leave' ? 'selected':''}>Sick leave</option>
-        <option ${s.type==='Family responsibility' ? 'selected':''}>Family responsibility</option>
+      <select id="reqType" style="margin-top:14px">
+        ${types.map(t => `<option ${t === choice ? 'selected' : ''}>${t}</option>`).join('')}
       </select>
       <div style="display:flex;gap:10px;margin-top:10px">
-        <input id="leaveFrom" type="date" value="${s.start || ''}" style="flex:1">
-        <input id="leaveTo" type="date" value="${s.end || ''}" style="flex:1">
+        <input id="reqFrom" type="date" value="${s.start || ''}" style="flex:1">
+        <input id="reqTo" type="date" value="${s.end || ''}" style="flex:1">
       </div>
-      <textarea id="leaveReason" placeholder="Reason (optional)" style="margin-top:10px;min-height:60px">${escapeHtml(s.reason || '')}</textarea>
+      <textarea id="reqReason" placeholder="${isShift ? 'Shift change details — e.g. swap Monday with Pieter' : 'Reason (optional)'}" style="margin-top:10px;min-height:60px">${escapeHtml(s.reason || '')}</textarea>
       <button class="btn-cta blue" id="sheetGo">SUBMIT REQUEST</button>
     </div>
   </div>`;
@@ -574,31 +608,51 @@ function wireSheet() {
   if (back) back.addEventListener('click', () => { state.sheet = null; render(); });
   if (state.sheet.type === 'note') {
     const txt = document.getElementById('sheetTxt');
-    if (txt) txt.addEventListener('input', () => { state.sheet.value = txt.value; render(); });
+    const go  = document.getElementById('sheetGo');
+    // Focus the textarea on open. autofocus alone is unreliable after innerHTML reflows.
+    if (txt) { setTimeout(() => { try { txt.focus(); txt.setSelectionRange(txt.value.length, txt.value.length); } catch {} }, 0); }
+    // Update state silently on every keystroke; reflect button state directly
+    // in the DOM so we don't re-render and lose focus.
+    if (txt && go) {
+      txt.addEventListener('input', () => {
+        state.sheet.value = txt.value;
+        const ok = txt.value.trim().length > 0 && !state.sheet.busy;
+        go.classList.toggle('ok', ok);
+        go.classList.toggle('disabled', !ok);
+        go.innerHTML = state.sheet.busy ? 'Clocking in…' : (ok ? 'CONFIRM &amp; CLOCK IN' : 'Add a note to continue');
+      });
+    }
     document.querySelectorAll('.sheet .chip').forEach(c => c.addEventListener('click', () => {
-      state.sheet.value = c.dataset.q; render();
+      const q = c.dataset.q;
+      state.sheet.value = q;
+      if (txt) {
+        txt.value = q;
+        txt.focus();
+        try { txt.setSelectionRange(q.length, q.length); } catch {}
+        txt.dispatchEvent(new Event('input'));
+      }
     }));
-    const go = document.getElementById('sheetGo');
     if (go) go.addEventListener('click', () => {
+      if (state.sheet.busy) return;
       if (!state.sheet.value || !state.sheet.value.trim()) return;
       submitClock('in');
     });
   }
-  if (state.sheet.type === 'leave') {
-    document.getElementById('leaveType').addEventListener('change', e => state.sheet.type_choice = e.target.value);
-    document.getElementById('leaveFrom').addEventListener('change', e => state.sheet.start = e.target.value);
-    document.getElementById('leaveTo').addEventListener('change', e => state.sheet.end = e.target.value);
-    document.getElementById('leaveReason').addEventListener('input', e => state.sheet.reason = e.target.value);
-    document.getElementById('sheetGo').addEventListener('click', submitLeave);
+  if (state.sheet.type === 'request') {
+    document.getElementById('reqType').addEventListener('change', e => state.sheet.type_choice = e.target.value);
+    document.getElementById('reqFrom').addEventListener('change', e => state.sheet.start = e.target.value);
+    document.getElementById('reqTo').addEventListener('change', e => state.sheet.end = e.target.value);
+    document.getElementById('reqReason').addEventListener('input', e => state.sheet.reason = e.target.value);
+    document.getElementById('sheetGo').addEventListener('click', submitRequest);
   }
 }
 
-async function submitLeave() {
+async function submitRequest() {
   const s = state.sheet || {};
-  const type = s.type_choice || document.getElementById('leaveType').value;
-  const start = s.start || document.getElementById('leaveFrom').value;
-  const end = s.end || document.getElementById('leaveTo').value || start;
-  const reason = s.reason || document.getElementById('leaveReason').value;
+  const type = s.type_choice || document.getElementById('reqType').value;
+  const start = s.start || document.getElementById('reqFrom').value;
+  const end = s.end || document.getElementById('reqTo').value || start;
+  const reason = s.reason || document.getElementById('reqReason').value;
   if (!start) { showToast('Pick a start date'); return; }
   try {
     await api('leave_create', {
@@ -689,13 +743,14 @@ function exportTimesheetCSV() {
   ts.entries.forEach(e => rows.push([e.day, `${e.date} ${e.monthShort || ''}`.trim(), e.tin, e.tout, e.hrs, e.note, e.loc]));
   rows.push([]);
   rows.push(['Total', '', '', '', fmtHM(ts.totalHrs), `target ${ts.target}h`, '']);
-  downloadCSV(`timesheet-${state.agent.id}-${ts.weekStart.toISOString().slice(0,10)}.csv`, rows);
+  const safeId = String(state.agent.id || 'me').replace(/[^a-z0-9_-]+/gi, '-');
+  downloadCSV(`timesheet-${safeId}-${ts.weekStart.toISOString().slice(0,10)}.csv`, rows);
 }
 
-// ───── LEAVE ─────────────────────────────────────────────────────────
+// ───── REQUESTS (leave + shift changes) ─────────────────────────────
 function renderLeave() {
   const lv = state.leave;
-  const head = renderHeader({ title: 'Leave', sub: 'Your balances & requests' });
+  const head = renderHeader({ title: 'Requests', sub: 'Leave balances & shift changes' });
   if (!lv) return head + (state.loading ? '<div class="loading">Loading…</div>' : '<div class="loading">No data</div>');
   const remaining = (b) => Math.max(0, b.total - b.used);
   return `${head}
@@ -710,18 +765,19 @@ function renderLeave() {
         `).join('')}
       </div>
       <button class="btn-cta ok" id="leaveBtn" style="margin-top:16px">
-        ${icon('plus', 22, 'var(--ink)', 2.4)} REQUEST LEAVE
+        ${icon('plus', 22, 'var(--ink)', 2.4)} NEW REQUEST
       </button>
-      <div class="section-title">Requests</div>
+      <div class="section-title">Your requests</div>
       <div class="col">
         ${(lv.requests || []).length === 0 ? `<div class="card pad-sm" style="text-align:center;color:var(--muted)">No requests yet.</div>` : ''}
         ${(lv.requests || []).map(r => {
           const cls = (r.status === 'Approved' ? 'pill-approved'
                     : r.status === 'Declined' ? 'pill-declined' : 'pill-pending');
+          const isShift = (r.type || '').toLowerCase().includes('shift');
           return `<div class="card req-row">
-              <div class="ic">${icon('calendar', 20, 'var(--blue)')}</div>
+              <div class="ic">${icon(isShift ? 'clock' : 'calendar', 20, 'var(--blue)')}</div>
               <div class="body">
-                <div class="t">${escapeHtml(r.type || 'Leave')}</div>
+                <div class="t">${escapeHtml(r.type || 'Request')}</div>
                 <div class="m">${escapeHtml(formatDateRange(r.start_date, r.end_date))} · ${r.days || 1} ${(r.days || 1) === 1 ? 'day' : 'days'}</div>
               </div>
               <span class="pill ${cls}"><span class="dot"></span>${escapeHtml(r.status || 'Pending')}</span>
@@ -734,7 +790,7 @@ function renderLeave() {
 function wireLeave() {
   const btn = document.getElementById('leaveBtn');
   if (btn) btn.addEventListener('click', () => {
-    state.sheet = { type: 'leave', type_choice: 'Annual leave', start: '', end: '', reason: '' };
+    state.sheet = { type: 'request', type_choice: 'Annual leave', start: '', end: '', reason: '' };
     render();
   });
 }
