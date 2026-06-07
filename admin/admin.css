@@ -359,6 +359,34 @@ td.dim { opacity: 0.55; }
 .check { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .check input { width: 18px; height: 18px; accent-color: var(--blue); }
 
+/* timesheets — per-day month grid with sticky employee column */
+.ts-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+.ts-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 100%; }
+/* The month grid is dense — let columns be narrow. */
+.ts-table--month { min-width: max-content; }
+.ts-table--month th, .ts-table--month td { padding: 10px 6px; font-size: 12.5px; }
+.ts-table--month th.ts-emp-col, .ts-table--month td.ts-emp-col { padding: 10px 12px; min-width: 180px; }
+.ts-table--month .ts-day-name { display: block; font-size: 9.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.ts-table--month .ts-day-num  { display: block; font-size: 14px; font-weight: 800; color: var(--ink); margin-top: 1px; }
+.ts-table--month td { white-space: nowrap; }
+.ts-weekend { background: rgba(232, 236, 244, 0.45); }
+
+/* Sticky first/last columns so they don't scroll out of view on month. */
+.ts-table th.ts-emp-col, .ts-table td.ts-emp-col {
+  position: sticky; left: 0; z-index: 2;
+  background: #fff;
+  box-shadow: 1px 0 0 var(--line);
+}
+.ts-table th.ts-emp-col { background: var(--paper); z-index: 3; }
+.ts-table th.ts-total-col, .ts-table td.ts-total-col {
+  position: sticky; right: 0; z-index: 2;
+  background: #fff;
+  box-shadow: -1px 0 0 var(--line);
+}
+.ts-table th.ts-total-col { background: var(--paper); z-index: 3; }
+/* The View/Edit buttons column doesn't need to be sticky — it's at the
+   far right past the Total. Scrolling to it is expected. */
+
 /* timesheets — period selector pills */
 .seg-pills {
   display: inline-flex; gap: 4px; padding: 3px;

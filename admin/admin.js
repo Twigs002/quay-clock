@@ -583,26 +583,32 @@ function renderTimesheets() {
       </div>
       <button class="btn small" id="tsCsv">${icon('download', 15)} Export CSV</button>
     </div>
-    <div style="overflow-x:auto">
-      <table>
+    <div class="ts-table-wrap ${isMonth ? 'ts-table-wrap--month' : ''}">
+      <table class="ts-table ${isMonth ? 'ts-table--month' : ''}">
         <thead><tr>
-          <th>Employee</th>
-          ${cols.map(c => `<th class="ctr">${escapeHtml(c.label)}</th>`).join('')}
-          <th class="ctr">Total</th>
-          <th class="r">View</th>
+          <th class="ts-emp-col">Employee</th>
+          ${cols.map(c => {
+            const parts = c.label.split(' '); // "Mon 3" → ["Mon", "3"] or "Mon" for weekly
+            const isPair = parts.length === 2;
+            return `<th class="ctr ${c.weekend ? 'ts-weekend' : ''}">${
+              isPair ? `<span class="ts-day-name">${escapeHtml(parts[0])}</span><span class="ts-day-num">${escapeHtml(parts[1])}</span>` : escapeHtml(c.label)
+            }</th>`;
+          }).join('')}
+          <th class="ctr ts-total-col">Total</th>
+          <th class="r ts-act-col">View</th>
         </tr></thead>
         <tbody>
           ${rows.length === 0 ? `<tr><td colspan="${cols.length + 3}" class="muted" style="text-align:center;padding:30px">No clock-in data for ${escapeHtml(PERIOD_LABELS[period].toLowerCase())} yet.</td></tr>` : ''}
           ${rows.map(([id, v], i) => `<tr data-search="${escapeHtml(((v.name||'') + ' ' + (v.role||'') + ' ' + id).toLowerCase())}">
-            <td>
+            <td class="ts-emp-col">
               <div class="nm">
                 <div class="av" style="background:${avColor(i)};width:32px;height:32px;font-size:12px">${initials(v.name)}</div>
                 <div class="who"><div class="n">${escapeHtml(v.name)}</div><div class="r">${escapeHtml(v.role || '')}</div></div>
               </div>
             </td>
-            ${v.vals.map(h => `<td class="ctr tnum" style="${h ? '' : 'color:var(--muted)'}">${fmtHM(h)}</td>`).join('')}
-            <td class="ctr tnum" style="color:var(--blue);font-weight:800">${fmtHM(v.total)}</td>
-            <td class="r">
+            ${v.vals.map((h, ci) => `<td class="ctr tnum ${cols[ci].weekend ? 'ts-weekend' : ''}" style="${h ? '' : 'color:var(--muted)'}">${fmtHM(h)}</td>`).join('')}
+            <td class="ctr tnum ts-total-col" style="color:var(--blue);font-weight:800">${fmtHM(v.total)}</td>
+            <td class="r ts-act-col">
               <button class="btn small" data-detail-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}">View</button>
               <button class="btn small" data-edit-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}" style="margin-left:6px">Edit</button>
             </td>
@@ -625,18 +631,26 @@ function weeklyBuckets() {
   });
 }
 function monthlyBuckets(range) {
-  // Split the month into ISO-week-aligned buckets (W1, W2, …).
-  const out = []; let cursor = startOfWeek(new Date(range.from));
-  let i = 1;
-  while (cursor.getTime() <= range.to.getTime()) {
-    const end = new Date(cursor); end.setDate(end.getDate() + 6); end.setHours(23,59,59,999);
-    // Clamp bucket bounds to the month range
-    const bFrom = Math.max(cursor.getTime(), new Date(range.from).getTime());
-    const bTo   = Math.min(end.getTime(), new Date(range.to).getTime());
-    out.push({ label: `W${i}`, from: bFrom, to: bTo });
-    cursor = new Date(end); cursor.setMilliseconds(cursor.getMilliseconds() + 1);
-    i += 1;
-    if (i > 6) break; // safety
+  // One bucket per day across the month — column header shows the
+  // day-of-week + date number ("Mon 3"). Grid scrolls horizontally,
+  // employee column is sticky via CSS so it stays visible.
+  const out = [];
+  const from = new Date(range.from);
+  const to   = new Date(range.to);
+  const cur  = new Date(from.getFullYear(), from.getMonth(), from.getDate(), 0,0,0);
+  while (cur.getTime() <= to.getTime()) {
+    const start = new Date(cur);
+    const end   = new Date(cur); end.setHours(23,59,59,999);
+    const dow = start.toLocaleDateString('en-GB', { weekday: 'short' });
+    const isWeekend = start.getDay() === 0 || start.getDay() === 6;
+    out.push({
+      label: `${dow} ${start.getDate()}`,
+      from: start.getTime(),
+      to: end.getTime(),
+      iso: start.toISOString().slice(0, 10),
+      weekend: isWeekend,
+    });
+    cur.setDate(cur.getDate() + 1);
   }
   return out;
 }
