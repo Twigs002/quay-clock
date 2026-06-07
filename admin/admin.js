@@ -91,7 +91,8 @@ function csvEscape(s) {
   return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 }
 function downloadCSV(filename, rows) {
-  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\n');
+  // UTF-8 BOM so Excel renders diacritics; CRLF so rows split on Windows.
+  const csv = '﻿' + rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -182,7 +183,7 @@ function renderSidebar() {
   const items = [
     ['dashboard','grid','Dashboard'],
     ['timesheets','clipboard','Timesheets'],
-    ['leave','calendar','Leave'],
+    ['leave','calendar','Requests'],
     ['team','users','Team'],
     ['locations','map','Locations'],
   ];
@@ -212,7 +213,7 @@ function renderSidebar() {
 const TITLES = {
   dashboard:  ['Dashboard',  'Live overview of your team today'],
   timesheets: ['Timesheets', 'Review & approve hours'],
-  leave:      ['Leave',      'Requests & approvals'],
+  leave:      ['Requests',   'Leave & shift-change requests'],
   team:       ['Team',       'Staff directory & status'],
   locations:  ['Locations',  'Office geofences'],
 };
@@ -251,10 +252,32 @@ function wireShell() {
   if (refresh) refresh.addEventListener('click', loadAll);
   const exp = document.getElementById('exportBtn');
   if (exp) exp.addEventListener('click', exportCurrent);
+  const search = document.getElementById('adminSearch');
+  if (search) {
+    search.value = state.search || '';
+    search.addEventListener('input', e => {
+      state.search = e.target.value;
+      applySearchFilter();
+    });
+  }
   // view-specific wiring
-  if (state.view === 'dashboard') wireDashboard();
-  if (state.view === 'leave')     wireLeave();
+  if (state.view === 'dashboard')  wireDashboard();
+  if (state.view === 'leave')      wireLeave();
   if (state.view === 'timesheets') wireTimesheets();
+  if (state.view === 'team')       wireTeam();
+  applySearchFilter();
+}
+
+function applySearchFilter() {
+  const q = (state.search || '').trim().toLowerCase();
+  document.querySelectorAll('tr[data-search]').forEach(row => {
+    if (!q) { row.style.display = ''; return; }
+    row.style.display = row.dataset.search.includes(q) ? '' : 'none';
+  });
+  document.querySelectorAll('.team-card[data-search]').forEach(c => {
+    if (!q) { c.style.display = ''; return; }
+    c.style.display = c.dataset.search.includes(q) ? '' : 'none';
+  });
 }
 
 function renderView() {
@@ -272,7 +295,6 @@ function renderView() {
 function renderDashboard() {
   const team = state.data.team || [];
   const onNow = team.filter(s => s.status === 'in').length;
-  const onBreak = 0; // not tracked yet
   const onLeave = (state.data.leave || []).filter(l =>
     l.status === 'Approved' && isToday(l.start_date, l.end_date)
   );
@@ -282,7 +304,7 @@ function renderDashboard() {
   return `
     <div class="stat-row">
       ${statCard('clock', 'var(--green)', 'var(--greenBg)', 'On the clock', String(onNow), `of ${team.length} staff`)}
-      ${statCard('coffee', 'var(--amber)', 'var(--amberBg)', 'On break', String(onBreak), '—')}
+      ${statCard('clipboard', 'var(--amber)', 'var(--amberBg)', 'Pending requests', String(pending.length), pending.length ? 'needs your review' : 'all caught up')}
       ${statCard('calendar', 'var(--blue)', 'var(--skySoft)', 'On leave', String(onLeave.length), onLeave.map(l => l.agent_name).join(', ') || '—')}
       ${statCard('chart', 'var(--ink)', '#EEF0F6', 'Hours logged today', fmtHM(hoursToday), 'across the team')}
     </div>
@@ -303,7 +325,7 @@ function renderDashboard() {
           </tr></thead>
           <tbody>
             ${team.length === 0 ? `<tr><td colspan="6" class="muted" style="text-align:center;padding:30px">No staff in the roster yet — add rows to the sheet.</td></tr>` : ''}
-            ${team.map((s, i) => `<tr class="${(s.status === 'off' || s.status === 'leave') ? 'dim' : ''}">
+            ${team.map((s, i) => `<tr class="${(s.status === 'off' || s.status === 'leave') ? 'dim' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
               <td>
                 <div class="nm">
                   <div class="av" style="background:${avColor(i)};width:34px;height:34px;font-size:12.5px">${initials(s.name)}</div>
@@ -461,10 +483,11 @@ function renderTimesheets() {
         <th>Employee</th>
         ${week.map(d => `<th class="ctr">${d}</th>`).join('')}
         <th class="ctr">Total</th>
+        <th class="r">Edit</th>
       </tr></thead>
       <tbody>
-        ${rows.length === 0 ? `<tr><td colspan="9" class="muted" style="text-align:center;padding:30px">No clock-in data this week yet.</td></tr>` : ''}
-        ${rows.map(([id, v], i) => `<tr>
+        ${rows.length === 0 ? `<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">No clock-in data this week yet.</td></tr>` : ''}
+        ${rows.map(([id, v], i) => `<tr data-search="${escapeHtml(((v.name||'') + ' ' + (v.role||'') + ' ' + id).toLowerCase())}">
           <td>
             <div class="nm">
               <div class="av" style="background:${avColor(i)};width:32px;height:32px;font-size:12px">${initials(v.name)}</div>
@@ -473,14 +496,180 @@ function renderTimesheets() {
           </td>
           ${v.days.map(h => `<td class="ctr tnum" style="${h ? '' : 'color:var(--muted)'}">${fmtHM(h)}</td>`).join('')}
           <td class="ctr tnum" style="color:var(--blue);font-weight:800">${fmtHM(v.total)}</td>
+          <td class="r"><button class="btn small" data-edit-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}">Edit</button></td>
         </tr>`).join('')}
       </tbody>
     </table>
+    ${state.eventEditor ? renderEventEditor() : ''}
   </div>`;
 }
 function wireTimesheets() {
   const csv = document.getElementById('tsCsv');
   if (csv) csv.addEventListener('click', exportTimesheetsCSV);
+  document.querySelectorAll('button[data-edit-events]').forEach(b => b.addEventListener('click', () => {
+    openEventEditor(b.dataset.editEvents, b.dataset.name);
+  }));
+  if (state.eventEditor) wireEventEditor();
+}
+
+// ── Event editor (admin manual clock-in/out edits) ──────────────────
+function openEventEditor(agentId, agentName) {
+  const sow = startOfWeek(new Date());
+  const events = (state.data.weekEvents || [])
+    .filter(e => e.id === agentId)
+    .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  state.eventEditor = {
+    agentId, agentName,
+    weekStart: sow,
+    events: events.slice(),
+    busy: false, error: '', adding: false,
+    addDraft: { action: 'in', date: new Date().toISOString().slice(0,10), time: '08:00', note: '', loc: '' },
+  };
+  render();
+}
+
+function renderEventEditor() {
+  const e = state.eventEditor;
+  const items = e.events.map((ev, idx) => {
+    const d = new Date(ev.ts);
+    const date = d.toISOString().slice(0,10);
+    const hh = pad(d.getHours()), mm = pad(d.getMinutes());
+    return `<div class="evrow" data-idx="${idx}">
+      <select class="ev-action">
+        <option value="in"  ${ev.action === 'in'  ? 'selected' : ''}>IN</option>
+        <option value="out" ${ev.action === 'out' ? 'selected' : ''}>OUT</option>
+      </select>
+      <input class="ev-date" type="date" value="${date}">
+      <input class="ev-time" type="time" value="${hh}:${mm}">
+      <input class="ev-note" type="text" value="${escapeHtml(ev.note || '')}" placeholder="note">
+      <button class="btn small" data-save="${idx}">Save</button>
+      <button class="btn small danger" data-del="${idx}">Delete</button>
+    </div>`;
+  }).join('');
+  const addBlock = e.adding ? `
+    <div class="evrow add">
+      <select id="evNewAction">
+        <option value="in" ${e.addDraft.action === 'in' ? 'selected' : ''}>IN</option>
+        <option value="out" ${e.addDraft.action === 'out' ? 'selected' : ''}>OUT</option>
+      </select>
+      <input id="evNewDate" type="date" value="${e.addDraft.date}">
+      <input id="evNewTime" type="time" value="${e.addDraft.time}">
+      <input id="evNewNote" type="text" value="${escapeHtml(e.addDraft.note)}" placeholder="note">
+      <button class="btn small primary" id="evAdd">Add</button>
+      <button class="btn small" id="evAddCancel">Cancel</button>
+    </div>` : `<button class="btn small primary" id="evShowAdd">+ Add event</button>`;
+  return `
+    <div class="modal-back" id="evBack"></div>
+    <div class="modal" role="dialog" style="width:min(640px, calc(100vw - 32px))">
+      <div class="modal-head">
+        <h3>Edit events — ${escapeHtml(e.agentName)}</h3>
+        <button class="modal-close" id="evClose">${icon('x', 18, 'var(--muted)')}</button>
+      </div>
+      <div class="modal-body">
+        <div class="ev-help">
+          Manually adjust this week's clock events. Pair each IN with an OUT for the duration to count.
+        </div>
+        ${e.events.length === 0 ? `<div class="muted" style="font-size:13px;padding:6px 0">No events this week.</div>` : ''}
+        ${items}
+        ${e.error ? `<div class="banner">${escapeHtml(e.error)}</div>` : ''}
+        <div style="margin-top:6px">${addBlock}</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="evDone">Done</button>
+      </div>
+    </div>`;
+}
+
+function wireEventEditor() {
+  const close = () => { state.eventEditor = null; loadAll(); };
+  document.getElementById('evBack').addEventListener('click', close);
+  document.getElementById('evClose').addEventListener('click', close);
+  document.getElementById('evDone').addEventListener('click', close);
+
+  document.querySelectorAll('.evrow[data-idx]').forEach(row => {
+    const idx = Number(row.dataset.idx);
+    row.querySelector('button[data-save]').addEventListener('click', () => saveEvent(idx, row));
+    row.querySelector('button[data-del]').addEventListener('click', () => deleteEvent(idx));
+  });
+
+  const showAdd = document.getElementById('evShowAdd');
+  if (showAdd) showAdd.addEventListener('click', () => { state.eventEditor.adding = true; render(); });
+  const cancel = document.getElementById('evAddCancel');
+  if (cancel) cancel.addEventListener('click', () => { state.eventEditor.adding = false; render(); });
+  const addBtn = document.getElementById('evAdd');
+  if (addBtn) addBtn.addEventListener('click', addEvent);
+}
+
+async function saveEvent(idx, row) {
+  const e = state.eventEditor;
+  const ev = e.events[idx];
+  const newAction = row.querySelector('.ev-action').value;
+  const newDate   = row.querySelector('.ev-date').value;
+  const newTime   = row.querySelector('.ev-time').value;
+  const newNote   = row.querySelector('.ev-note').value;
+  if (!newDate || !newTime) { e.error = 'Pick a valid date and time'; render(); return; }
+  const newTs = new Date(newDate + 'T' + newTime + ':00').toISOString();
+  try {
+    await api('event_update', {
+      admin_pin: state.admin.pin,
+      agent_id: e.agentId,
+      ts: ev.ts,
+      new_ts: newTs,
+      action: newAction,
+      note: newNote,
+    });
+    // mutate locally so the next save uses the new ts
+    e.events[idx] = { ...ev, ts: newTs, action: newAction, note: newNote };
+    e.error = '';
+    showToast('Saved');
+  } catch (err) {
+    e.error = String(err.message || err);
+  }
+  render();
+}
+
+async function deleteEvent(idx) {
+  const e = state.eventEditor;
+  const ev = e.events[idx];
+  if (!confirm('Delete this event? This can\'t be undone.')) return;
+  try {
+    await api('event_delete', { admin_pin: state.admin.pin, agent_id: e.agentId, ts: ev.ts });
+    e.events.splice(idx, 1);
+    e.error = '';
+    showToast('Deleted');
+  } catch (err) {
+    e.error = String(err.message || err);
+  }
+  render();
+}
+
+async function addEvent() {
+  const e = state.eventEditor;
+  const action = document.getElementById('evNewAction').value;
+  const date = document.getElementById('evNewDate').value;
+  const time = document.getElementById('evNewTime').value;
+  const note = document.getElementById('evNewNote').value;
+  e.addDraft = { action, date, time, note, loc: '' };
+  if (!date || !time) { e.error = 'Pick a valid date and time'; render(); return; }
+  const ts = new Date(date + 'T' + time + ':00').toISOString();
+  try {
+    await api('event_add', { admin_pin: state.admin.pin, agent_id: e.agentId, ts, action, note });
+    e.events.push({ ts, id: e.agentId, name: e.agentName, action, note, loc: '', duration_hrs: null });
+    e.events.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    e.adding = false; e.error = '';
+    showToast('Added');
+  } catch (err) {
+    e.error = String(err.message || err);
+  }
+  render();
+}
+
+function showToast(msg) {
+  let t = document.getElementById('adminToast');
+  if (!t) { t = document.createElement('div'); t.id = 'adminToast'; t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { t.style.display = 'none'; }, 1800);
 }
 function weekLabel(monday) {
   const sun = new Date(monday); sun.setDate(sun.getDate() + 6);
@@ -555,23 +744,140 @@ function wireLeave() {
 // ───── TEAM ──────────────────────────────────────────────────────────
 function renderTeam() {
   const roster = state.data.roster || [];
-  return `<div class="team-grid">
-    ${roster.length === 0 ? `<div class="empty card" style="grid-column:1/-1">No staff in the Roster tab yet.</div>` : ''}
-    ${roster.map((s, i) => `<div class="card team-card">
-      <div class="top">
-        <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px">${initials(s.name)}</div>
-        <div style="min-width:0">
-          <div class="name">${escapeHtml(s.name)}${s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : ''}</div>
-          <div class="role">${escapeHtml(s.role || '')}</div>
+  return `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+      <button class="btn primary small" id="addStaffBtn">+ Add staff</button>
+    </div>
+    <div class="team-grid">
+      ${roster.length === 0 ? `<div class="empty card" style="grid-column:1/-1">No staff yet — click <b>+ Add staff</b> to add your first.</div>` : ''}
+      ${roster.map((s, i) => `<div class="card team-card" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
+        <div class="top">
+          <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px">${initials(s.name)}</div>
+          <div style="min-width:0">
+            <div class="name">${escapeHtml(s.name)}${s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : ''}</div>
+            <div class="role">${escapeHtml(s.role || '')}</div>
+          </div>
         </div>
+        <div style="margin-top:14px">${tagFor(s.status)}</div>
+        <div class="meta">
+          <div class="li">${icon('users', 14, 'var(--muted)')}@${escapeHtml(s.id || '—')}</div>
+          <div class="li">${icon('pin', 14, 'var(--muted)')}${escapeHtml(s.lastLoc || '—')}</div>
+        </div>
+      </div>`).join('')}
+    </div>
+    ${state.addStaff ? renderAddStaffModal() : ''}
+  `;
+}
+
+function wireTeam() {
+  const btn = document.getElementById('addStaffBtn');
+  if (btn) btn.addEventListener('click', () => {
+    state.addStaff = { name: '', id: '', role: '', team: '', pin: '', admin: false, error: '', busy: false };
+    render();
+  });
+  if (state.addStaff) wireAddStaffModal();
+}
+
+function renderAddStaffModal() {
+  const f = state.addStaff;
+  const err = f.error || '';
+  return `
+    <div class="modal-back" id="staffBack"></div>
+    <div class="modal" role="dialog">
+      <div class="modal-head">
+        <h3>Add a staff member</h3>
+        <button class="modal-close" id="staffClose" aria-label="Close">${icon('x', 18, 'var(--muted)')}</button>
       </div>
-      <div style="margin-top:14px">${tagFor(s.status)}</div>
-      <div class="meta">
-        <div class="li">${icon('users', 14, 'var(--muted)')}@${escapeHtml(s.id || '—')}</div>
-        <div class="li">${icon('pin', 14, 'var(--muted)')}${escapeHtml(s.lastLoc || '—')}</div>
+      <div class="modal-body">
+        <label class="field"><span>Name</span>
+          <input id="sfName" type="text" value="${escapeHtml(f.name)}" placeholder="e.g. Thandi Mokoena" autofocus>
+        </label>
+        <label class="field"><span>Username</span>
+          <input id="sfId" type="text" value="${escapeHtml(f.id)}" placeholder="auto from name — lowercase, no spaces" autocapitalize="off" autocomplete="off">
+          <div class="hint">Used as the login id. Auto-generated from name; edit to override.</div>
+        </label>
+        <div class="field-row">
+          <label class="field"><span>Role</span>
+            <input id="sfRole" type="text" value="${escapeHtml(f.role)}" placeholder="Sales Agent">
+          </label>
+          <label class="field"><span>Team</span>
+            <input id="sfTeam" type="text" value="${escapeHtml(f.team)}" placeholder="Sales">
+          </label>
+        </div>
+        <label class="field"><span>PIN</span>
+          <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${escapeHtml(f.pin)}" placeholder="4 digits — they'll use this to log in">
+        </label>
+        <label class="check">
+          <input id="sfAdmin" type="checkbox" ${f.admin ? 'checked' : ''}>
+          <span>Admin — can open this dashboard</span>
+        </label>
+        ${err ? `<div class="banner">${escapeHtml(err)}</div>` : ''}
       </div>
-    </div>`).join('')}
-  </div>`;
+      <div class="modal-foot">
+        <button class="btn" id="staffCancel">Cancel</button>
+        <button class="btn primary" id="staffSave" ${f.busy ? 'disabled' : ''}>${f.busy ? 'Adding…' : 'Add staff'}</button>
+      </div>
+    </div>`;
+}
+
+function wireAddStaffModal() {
+  const close = () => { state.addStaff = null; render(); };
+  document.getElementById('staffBack').addEventListener('click', close);
+  document.getElementById('staffClose').addEventListener('click', close);
+  document.getElementById('staffCancel').addEventListener('click', close);
+
+  const f = state.addStaff;
+  const name = document.getElementById('sfName');
+  const idIn = document.getElementById('sfId');
+  const role = document.getElementById('sfRole');
+  const team = document.getElementById('sfTeam');
+  const pin  = document.getElementById('sfPin');
+  const adm  = document.getElementById('sfAdmin');
+
+  // Auto-slug the username from name UNTIL the user types in the id field.
+  let idTouched = !!f.id;
+  name.addEventListener('input', () => {
+    f.name = name.value;
+    if (!idTouched) {
+      const slug = name.value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+      idIn.value = slug;
+      f.id = slug;
+    }
+  });
+  idIn.addEventListener('input', () => { idTouched = true; f.id = idIn.value; });
+  role.addEventListener('input', () => { f.role = role.value; });
+  team.addEventListener('input', () => { f.team = team.value; });
+  pin.addEventListener('input', () => { f.pin = pin.value.replace(/[^0-9]/g, '').slice(0, 4); pin.value = f.pin; });
+  adm.addEventListener('change', () => { f.admin = adm.checked; });
+
+  document.getElementById('staffSave').addEventListener('click', submitAddStaff);
+}
+
+async function submitAddStaff() {
+  const f = state.addStaff;
+  if (!f) return;
+  f.error = '';
+  if (!f.name.trim()) { f.error = 'Name is required'; render(); return; }
+  if (f.pin.length !== 4) { f.error = 'PIN must be 4 digits'; render(); return; }
+  f.busy = true; render();
+  try {
+    await api('roster_add', {
+      admin_pin: state.admin.pin,
+      name: f.name.trim(),
+      id: f.id.trim() || f.name,
+      role: f.role.trim(),
+      team: f.team.trim(),
+      pin: f.pin,
+      admin: !!f.admin,
+    });
+    state.addStaff = null;
+    await loadAll();
+    render();
+  } catch (e) {
+    f.busy = false;
+    f.error = String(e.message || e);
+    render();
+  }
 }
 
 // ───── LOCATIONS ─────────────────────────────────────────────────────
