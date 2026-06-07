@@ -31,7 +31,10 @@ const state = {
     leave: null,         // [{ id, agent_name, type, dates, days, reason, status }]
     weekEvents: null,    // weekly events for timesheet view
     roster: null,        // for staff directory + counts
+    tsEvents: null,      // events for the selected timesheet period
   },
+  tsPeriod: 'this-week', // this-week | last-week | this-month | last-month
+  tsDetail: null,        // { agentId, agentName } when detail modal open
 };
 
 const $root = document.getElementById('admin');
@@ -101,6 +104,36 @@ function startOfWeek(d) {
   x.setHours(0,0,0,0); x.setDate(x.getDate() - day); return x;
 }
 function endOfWeek(d) { const s = startOfWeek(d); const e = new Date(s); e.setDate(e.getDate() + 6); e.setHours(23,59,59,999); return e; }
+
+const PERIOD_LABELS = {
+  'this-week':  'This Week',
+  'last-week':  'Last Week',
+  'this-month': 'This Month',
+  'last-month': 'Last Month',
+};
+function periodRange(p) {
+  const now = new Date();
+  if (p === 'last-week') {
+    const lw = new Date(now); lw.setDate(lw.getDate() - 7);
+    return { from: startOfWeek(lw), to: endOfWeek(lw), kind: 'week' };
+  }
+  if (p === 'this-month') {
+    return { from: new Date(now.getFullYear(), now.getMonth(), 1, 0,0,0),
+             to:   new Date(now.getFullYear(), now.getMonth() + 1, 0, 23,59,59),
+             kind: 'month' };
+  }
+  if (p === 'last-month') {
+    return { from: new Date(now.getFullYear(), now.getMonth() - 1, 1, 0,0,0),
+             to:   new Date(now.getFullYear(), now.getMonth(), 0, 23,59,59),
+             kind: 'month' };
+  }
+  return { from: startOfWeek(now), to: endOfWeek(now), kind: 'week' };
+}
+function periodLabel(p) {
+  const r = periodRange(p);
+  if (r.kind === 'week') return weekLabel(r.from);
+  return r.from.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+}
 function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -173,6 +206,27 @@ async function loadAll() {
     state.data.leave = (leave.leave || []).map(l => ({ ...l, dates: fmtDateRange(l.start_date, l.end_date) }));
     state.data.roster = roster.roster || [];
     state.data.weekEvents = events.events || [];
+    // Initial Timesheets payload mirrors the dashboard's current-week events.
+    if (state.tsPeriod === 'this-week') state.data.tsEvents = state.data.weekEvents;
+  } catch (e) {
+    state.error = e.message;
+  } finally {
+    state.loading = false; render();
+  }
+}
+
+async function loadTsEvents(period) {
+  state.tsPeriod = period;
+  if (period === 'this-week' && state.data.weekEvents) {
+    state.data.tsEvents = state.data.weekEvents;
+    render(); return;
+  }
+  const r = periodRange(period);
+  state.loading = true; render();
+  try {
+    const data = await api('events', { from: r.from.toISOString(), to: r.to.toISOString() });
+    state.data.tsEvents = data.events || [];
+    state.error = null;
   } catch (e) {
     state.error = e.message;
   } finally {
@@ -491,64 +545,287 @@ function isToday(start, end) {
 
 // ───── TIMESHEETS ────────────────────────────────────────────────────
 function renderTimesheets() {
-  const sow = startOfWeek(new Date());
-  const week = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const events = state.data.weekEvents || [];
+  const period = state.tsPeriod || 'this-week';
+  const range = periodRange(period);
+  const events = state.data.tsEvents || [];
   const roster = state.data.roster || [];
-  // build per-agent per-day hours
+  const isMonth = range.kind === 'month';
+
+  const periodChips = ['this-week','last-week','this-month','last-month']
+    .map(p => `<button class="seg-btn ${p === period ? 'on' : ''}" data-ts-period="${p}">${PERIOD_LABELS[p]}</button>`)
+    .join('');
+
+  // Aggregate by agent → choose column layout based on weekly vs monthly.
+  const cols = isMonth ? monthlyBuckets(range) : weeklyBuckets();
   const grid = {};
-  roster.forEach(a => { grid[a.id] = { name: a.name, role: a.role, days: [0,0,0,0,0,0,0], total: 0 }; });
+  roster.forEach(a => { grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0), total: 0, days: {} }; });
   events.forEach(e => {
     if (e.action !== 'out' || e.duration_hrs == null) return;
-    const d = new Date(e.ts);
-    const idx = (d.getDay() + 6) % 7;
-    if (!grid[e.id]) grid[e.id] = { name: e.name, role: '', days: [0,0,0,0,0,0,0], total: 0 };
-    grid[e.id].days[idx] += e.duration_hrs;
-    grid[e.id].total += e.duration_hrs;
+    const ts = new Date(e.ts).getTime();
+    if (!grid[e.id]) grid[e.id] = { name: e.name, role: '', vals: cols.map(_ => 0), total: 0, days: {} };
+    const idx = cols.findIndex(c => ts >= c.from && ts <= c.to);
+    if (idx >= 0) {
+      grid[e.id].vals[idx] += e.duration_hrs;
+      grid[e.id].total += e.duration_hrs;
+      const dayKey = new Date(e.ts).toISOString().slice(0, 10);
+      grid[e.id].days[dayKey] = (grid[e.id].days[dayKey] || 0) + e.duration_hrs;
+    }
   });
   const rows = Object.entries(grid)
     .filter(([, v]) => v.total > 0 || roster.some(a => a.name === v.name))
     .sort((a, b) => b[1].total - a[1].total);
 
   return `<div class="card" style="overflow:hidden">
-    <div class="card-head">
-      <div style="display:flex;align-items:center;gap:12px">
-        <h3>Week of ${weekLabel(sow)}</h3>
+    <div class="card-head" style="flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h3>${escapeHtml(periodLabel(period))}</h3>
+        <div class="seg-pills" role="tablist">${periodChips}</div>
       </div>
       <button class="btn small" id="tsCsv">${icon('download', 15)} Export CSV</button>
     </div>
-    <table>
-      <thead><tr>
-        <th>Employee</th>
-        ${week.map(d => `<th class="ctr">${d}</th>`).join('')}
-        <th class="ctr">Total</th>
-        <th class="r">Edit</th>
-      </tr></thead>
-      <tbody>
-        ${rows.length === 0 ? `<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">No clock-in data this week yet.</td></tr>` : ''}
-        ${rows.map(([id, v], i) => `<tr data-search="${escapeHtml(((v.name||'') + ' ' + (v.role||'') + ' ' + id).toLowerCase())}">
-          <td>
-            <div class="nm">
-              <div class="av" style="background:${avColor(i)};width:32px;height:32px;font-size:12px">${initials(v.name)}</div>
-              <div class="who"><div class="n">${escapeHtml(v.name)}</div><div class="r">${escapeHtml(v.role || '')}</div></div>
-            </div>
-          </td>
-          ${v.days.map(h => `<td class="ctr tnum" style="${h ? '' : 'color:var(--muted)'}">${fmtHM(h)}</td>`).join('')}
-          <td class="ctr tnum" style="color:var(--blue);font-weight:800">${fmtHM(v.total)}</td>
-          <td class="r"><button class="btn small" data-edit-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}">Edit</button></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr>
+          <th>Employee</th>
+          ${cols.map(c => `<th class="ctr">${escapeHtml(c.label)}</th>`).join('')}
+          <th class="ctr">Total</th>
+          <th class="r">View</th>
+        </tr></thead>
+        <tbody>
+          ${rows.length === 0 ? `<tr><td colspan="${cols.length + 3}" class="muted" style="text-align:center;padding:30px">No clock-in data for ${escapeHtml(PERIOD_LABELS[period].toLowerCase())} yet.</td></tr>` : ''}
+          ${rows.map(([id, v], i) => `<tr data-search="${escapeHtml(((v.name||'') + ' ' + (v.role||'') + ' ' + id).toLowerCase())}">
+            <td>
+              <div class="nm">
+                <div class="av" style="background:${avColor(i)};width:32px;height:32px;font-size:12px">${initials(v.name)}</div>
+                <div class="who"><div class="n">${escapeHtml(v.name)}</div><div class="r">${escapeHtml(v.role || '')}</div></div>
+              </div>
+            </td>
+            ${v.vals.map(h => `<td class="ctr tnum" style="${h ? '' : 'color:var(--muted)'}">${fmtHM(h)}</td>`).join('')}
+            <td class="ctr tnum" style="color:var(--blue);font-weight:800">${fmtHM(v.total)}</td>
+            <td class="r">
+              <button class="btn small" data-detail-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}">View</button>
+              <button class="btn small" data-edit-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}" style="margin-left:6px">Edit</button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
     ${state.eventEditor ? renderEventEditor() : ''}
+    ${state.tsDetail ? renderTsDetail() : ''}
   </div>`;
 }
+
+function weeklyBuckets() {
+  const sow = startOfWeek(new Date());
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  return days.map((label, i) => {
+    const d = new Date(sow); d.setDate(d.getDate() + i);
+    const end = new Date(d); end.setHours(23,59,59,999);
+    return { label, from: d.getTime(), to: end.getTime() };
+  });
+}
+function monthlyBuckets(range) {
+  // Split the month into ISO-week-aligned buckets (W1, W2, …).
+  const out = []; let cursor = startOfWeek(new Date(range.from));
+  let i = 1;
+  while (cursor.getTime() <= range.to.getTime()) {
+    const end = new Date(cursor); end.setDate(end.getDate() + 6); end.setHours(23,59,59,999);
+    // Clamp bucket bounds to the month range
+    const bFrom = Math.max(cursor.getTime(), new Date(range.from).getTime());
+    const bTo   = Math.min(end.getTime(), new Date(range.to).getTime());
+    out.push({ label: `W${i}`, from: bFrom, to: bTo });
+    cursor = new Date(end); cursor.setMilliseconds(cursor.getMilliseconds() + 1);
+    i += 1;
+    if (i > 6) break; // safety
+  }
+  return out;
+}
+
 function wireTimesheets() {
   const csv = document.getElementById('tsCsv');
   if (csv) csv.addEventListener('click', exportTimesheetsCSV);
+  document.querySelectorAll('button[data-ts-period]').forEach(b =>
+    b.addEventListener('click', () => loadTsEvents(b.dataset.tsPeriod)));
   document.querySelectorAll('button[data-edit-events]').forEach(b => b.addEventListener('click', () => {
     openEventEditor(b.dataset.editEvents, b.dataset.name);
   }));
+  document.querySelectorAll('button[data-detail-events]').forEach(b => b.addEventListener('click', () => {
+    openTsDetail(b.dataset.detailEvents, b.dataset.name);
+  }));
   if (state.eventEditor) wireEventEditor();
+  if (state.tsDetail) wireTsDetail();
+}
+
+// ── Per-employee detail modal — Connecteam-style ─────────────────────
+function openTsDetail(agentId, agentName) {
+  state.tsDetail = { agentId, agentName };
+  render();
+}
+function renderTsDetail() {
+  const d = state.tsDetail;
+  const period = state.tsPeriod || 'this-week';
+  const range = periodRange(period);
+  const events = (state.data.tsEvents || [])
+    .filter(e => e.id === d.agentId)
+    .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+
+  // Pair INs with OUTs → flat list of shifts.
+  const shifts = [];
+  let openIn = null;
+  events.forEach(e => {
+    if (e.action === 'in') { openIn = e; return; }
+    if (e.action === 'out') {
+      const inDate = openIn ? new Date(openIn.ts) : null;
+      const outDate = new Date(e.ts);
+      const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
+        ? Number(e.duration_hrs)
+        : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+      shifts.push({
+        date: (inDate || outDate),
+        tin: inDate ? fmtTimeOf(inDate) : '—',
+        tout: fmtTimeOf(outDate),
+        hrs,
+        note: openIn ? (openIn.note || '') : (e.note || ''),
+      });
+      openIn = null;
+    }
+  });
+
+  // Bucket shifts by ISO week start (Mon).
+  const byWeek = new Map();
+  shifts.forEach(s => {
+    const wk = startOfWeek(s.date).toISOString().slice(0, 10);
+    if (!byWeek.has(wk)) byWeek.set(wk, []);
+    byWeek.get(wk).push(s);
+  });
+
+  // Aggregate daily totals + weekly totals.
+  let grandTotal = 0; let workedDays = new Set();
+  const blocks = [...byWeek.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([wk, list]) => {
+    const wkStart = new Date(wk);
+    const wkEnd = new Date(wkStart); wkEnd.setDate(wkEnd.getDate() + 6);
+    let wkTotal = 0;
+    // Daily totals: map dateKey → { rows: shifts that day, total }
+    const byDay = {};
+    list.forEach(s => {
+      const k = s.date.toISOString().slice(0, 10);
+      if (!byDay[k]) byDay[k] = { date: s.date, rows: [], total: 0 };
+      byDay[k].rows.push(s);
+      byDay[k].total += s.hrs;
+      wkTotal += s.hrs;
+      grandTotal += s.hrs;
+      workedDays.add(k);
+    });
+    return {
+      label: wkLabel(wkStart, wkEnd),
+      days: Object.values(byDay).sort((a, b) => b.date - a.date),
+      total: wkTotal,
+    };
+  }).reverse(); // newest week first
+
+  const rangeLabel = range.kind === 'week'
+    ? weekLabel(range.from)
+    : `${range.from.toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – ${range.to.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}`;
+
+  return `
+    <div class="modal-back" id="tsDetailBack"></div>
+    <div class="modal" role="dialog" style="width:min(820px, calc(100vw - 16px));max-height:92vh">
+      <div class="modal-head">
+        <div style="display:flex;align-items:center;gap:12px;min-width:0">
+          <div class="av" style="background:${avColor(0)};width:36px;height:36px;font-size:13px">${initials(d.agentName)}</div>
+          <div style="min-width:0">
+            <h3 style="margin:0;font-size:16px">${escapeHtml(d.agentName)}</h3>
+            <div style="font-size:12px;color:var(--muted);font-weight:600">${escapeHtml(rangeLabel)}</div>
+          </div>
+        </div>
+        <button class="modal-close" id="tsDetailClose">${icon('x', 18, 'var(--muted)')}</button>
+      </div>
+      <div class="modal-body" style="padding-bottom:18px">
+        <div class="ts-summary">
+          <div><span class="lbl">Total hours</span><span class="val tnum">${fmtHM(grandTotal)}</span></div>
+          <div><span class="lbl">Worked days</span><span class="val tnum">${workedDays.size}</span></div>
+          <div><span class="lbl">Shifts</span><span class="val tnum">${shifts.length}</span></div>
+        </div>
+        ${blocks.length === 0 ? `<div class="muted" style="padding:20px 0;text-align:center">No shifts in this period.</div>` : ''}
+        ${blocks.map(b => `
+          <div class="ts-block">
+            <div class="ts-block-head">
+              <span>${escapeHtml(b.label)}</span>
+              <span class="tnum">Weekly total · ${fmtHM(b.total)}</span>
+            </div>
+            <div class="ts-day-list">
+              ${b.days.map(day => `
+                <div class="ts-day">
+                  <div class="ts-day-head">
+                    <span class="ts-day-name">${day.date.toLocaleDateString('en-GB', { weekday: 'short' })} ${day.date.getDate()}/${day.date.getMonth() + 1}</span>
+                    <span class="ts-day-total tnum">${fmtHM(day.total)}</span>
+                  </div>
+                  ${day.rows.map(s => `
+                    <div class="ts-shift">
+                      <span class="ts-time tnum">${s.tin} – ${s.tout}</span>
+                      <span class="ts-shift-hrs tnum">${fmtHM(s.hrs)}</span>
+                      <span class="ts-shift-note">${escapeHtml(s.note || '—')}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="tsDetailEdit">${icon('clipboard', 15)} Edit events</button>
+        <button class="btn primary" id="tsDetailExport">${icon('download', 15)} Export CSV</button>
+      </div>
+    </div>`;
+}
+
+function wireTsDetail() {
+  const close = () => { state.tsDetail = null; render(); };
+  document.getElementById('tsDetailBack').addEventListener('click', close);
+  document.getElementById('tsDetailClose').addEventListener('click', close);
+  document.getElementById('tsDetailEdit').addEventListener('click', () => {
+    const d = state.tsDetail;
+    state.tsDetail = null;
+    openEventEditor(d.agentId, d.agentName);
+  });
+  document.getElementById('tsDetailExport').addEventListener('click', exportTsDetailCSV);
+}
+
+function exportTsDetailCSV() {
+  const d = state.tsDetail; if (!d) return;
+  const period = state.tsPeriod || 'this-week';
+  const events = (state.data.tsEvents || []).filter(e => e.id === d.agentId)
+    .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  const rows = [['Date','Start','End','Hours','Note']];
+  let openIn = null;
+  events.forEach(e => {
+    if (e.action === 'in') { openIn = e; return; }
+    if (e.action === 'out') {
+      const inDate = openIn ? new Date(openIn.ts) : null;
+      const outDate = new Date(e.ts);
+      const hrs = (e.duration_hrs != null) ? Number(e.duration_hrs) : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+      rows.push([
+        (inDate || outDate).toISOString().slice(0, 10),
+        inDate ? fmtTimeOf(inDate) : '',
+        fmtTimeOf(outDate),
+        fmtHM(hrs),
+        openIn ? (openIn.note || '') : '',
+      ]);
+      openIn = null;
+    }
+  });
+  const safeId = d.agentId.replace(/[^a-z0-9_-]+/gi, '-');
+  downloadCSV(`timesheet-${safeId}-${period}.csv`, rows);
+}
+
+function fmtTimeOf(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+function wkLabel(start, end) {
+  const sd = start.getDate(); const ed = end.getDate();
+  if (start.getMonth() === end.getMonth()) {
+    return `${sd} – ${ed} ${end.toLocaleDateString('en-GB', { month: 'short' })}`;
+  }
+  return `${sd} ${start.toLocaleDateString('en-GB', { month: 'short' })} – ${ed} ${end.toLocaleDateString('en-GB', { month: 'short' })}`;
 }
 
 // ── Event editor (admin manual clock-in/out edits) ──────────────────
@@ -932,27 +1209,36 @@ function exportTeamCSV() {
   downloadCSV(`team-${new Date().toISOString().slice(0,10)}.csv`, rows);
 }
 function exportTimesheetsCSV() {
-  const events = state.data.weekEvents || [];
+  // Exports the current Timesheets view (period-aware: week or month).
+  const period = state.tsPeriod || 'this-week';
+  const range = periodRange(period);
+  const events = state.data.tsEvents || [];
   const roster = state.data.roster || [];
+  const cols = range.kind === 'month' ? monthlyBuckets(range) : weeklyBuckets();
   const grid = {};
-  roster.forEach(a => { grid[a.id] = { id: a.id, name: a.name, role: a.role, days: [0,0,0,0,0,0,0] }; });
+  roster.forEach(a => { grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0) }; });
   events.forEach(e => {
     if (e.action !== 'out' || e.duration_hrs == null) return;
-    const idx = (new Date(e.ts).getDay() + 6) % 7;
-    if (!grid[e.id]) grid[e.id] = { id: e.id, name: e.name, role: '', days: [0,0,0,0,0,0,0] };
-    grid[e.id].days[idx] += e.duration_hrs;
+    const ts = new Date(e.ts).getTime();
+    if (!grid[e.id]) grid[e.id] = { name: e.name, role: '', vals: cols.map(_ => 0) };
+    const idx = cols.findIndex(c => ts >= c.from && ts <= c.to);
+    if (idx >= 0) grid[e.id].vals[idx] += e.duration_hrs;
   });
-  const sow = startOfWeek(new Date());
-  const dates = [...Array(7)].map((_, i) => {
-    const d = new Date(sow); d.setDate(d.getDate() + i);
-    return d.toISOString().slice(0, 10);
+  // Column header dates depend on period
+  const headers = cols.map(c => {
+    const d = new Date(c.from);
+    if (range.kind === 'week') return d.toISOString().slice(0, 10);
+    return c.label; // W1, W2, ...
   });
-  const rows = [['Employee', 'Role', ...dates, 'Total']];
+  const rows = [['Employee', 'Role', ...headers, 'Total']];
   Object.values(grid).forEach(v => {
-    const total = v.days.reduce((s, h) => s + h, 0);
-    rows.push([v.name, v.role || '', ...v.days.map(h => h.toFixed(2)), total.toFixed(2)]);
+    const total = v.vals.reduce((s, h) => s + h, 0);
+    rows.push([v.name, v.role || '', ...v.vals.map(h => h.toFixed(2)), total.toFixed(2)]);
   });
-  downloadCSV(`timesheets-week-${sow.toISOString().slice(0,10)}.csv`, rows);
+  const tag = range.kind === 'month'
+    ? range.from.toISOString().slice(0, 7)
+    : range.from.toISOString().slice(0, 10);
+  downloadCSV(`timesheets-${period}-${tag}.csv`, rows);
 }
 function exportLeaveCSV() {
   const leave = state.data.leave || [];
