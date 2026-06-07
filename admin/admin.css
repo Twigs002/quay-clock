@@ -35,6 +35,39 @@ button { cursor: pointer; }
 .app {
   display: flex; height: 100vh; min-height: 100vh; background: var(--paper);
 }
+.app.app-embed {
+  flex-direction: column; height: 100vh; min-height: 100vh;
+}
+html.embed, html.embed body { background: var(--paper); }
+
+/* embed-mode top nav (replaces sidebar) */
+.topnav {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 16px;
+  background: var(--side); color: #fff;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  flex-wrap: wrap;
+}
+.topnav .nav-item {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 10px;
+  border: 0; background: transparent;
+  color: rgba(255,255,255,0.62); font-weight: 600; font-size: 13.5px;
+}
+.topnav .nav-item.on {
+  background: rgba(255,255,255,0.1); color: #fff; font-weight: 700;
+}
+.topnav-spacer { flex: 1; }
+.topnav .me-mini {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: rgba(255,255,255,0.75); font-weight: 600;
+  padding: 0 6px;
+}
+.topnav .signout-mini {
+  background: transparent; border: 0; color: rgba(255,255,255,0.55);
+  padding: 6px 8px; border-radius: 8px;
+}
+.topnav .signout-mini:hover { background: rgba(255,255,255,0.06); color: #fff; }
 .sidebar {
   width: 236px; flex-shrink: 0; background: var(--side);
   display: flex; flex-direction: column; padding: 24px 16px 16px;
