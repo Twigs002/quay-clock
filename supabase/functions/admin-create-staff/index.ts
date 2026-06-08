@@ -19,6 +19,8 @@ interface Body {
   team?: string;
   admin?: boolean;
   active?: boolean;
+  hourly_rate?: number | string | null;
+  weekly_hours?: number | string | null;
 }
 
 const CORS = {
@@ -83,6 +85,7 @@ Deno.serve(async (req) => {
   }
 
   // 5. Insert the staff row.
+  const num = (v: unknown) => (v === '' || v == null ? null : Number(v));
   const { error: staffErr } = await admin.from("staff").insert({
     id,
     auth_user_id: authData.user.id,
@@ -91,6 +94,8 @@ Deno.serve(async (req) => {
     team: body.team ?? "",
     is_admin: !!body.admin,
     active: body.active === false ? false : true,
+    hourly_rate:  num(body.hourly_rate),
+    weekly_hours: num(body.weekly_hours),
   });
   if (staffErr) {
     // Best-effort rollback of the auth user so we don't leak orphans.

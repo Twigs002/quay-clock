@@ -224,6 +224,8 @@ const handlers = {
       return {
         id: s.id, name: s.name, role: s.role || '', team: s.team || '',
         admin: !!s.is_admin,
+        hourly_rate:  s.hourly_rate  != null ? Number(s.hourly_rate)  : null,
+        weekly_hours: s.weekly_hours != null ? Number(s.weekly_hours) : null,
         status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
         lastNote: st.lastNote, lastLoc: st.lastLoc,
       };
@@ -283,6 +285,8 @@ const handlers = {
       end_date: r.end_date,
       days: Number(r.days || 1),
       reason: r.reason || '',
+      proposed_start: r.proposed_start || '',
+      proposed_end:   r.proposed_end || '',
       status: r.status,
       decided_by: r.decided_by || '',
       decided_ts: r.decided_at || '',
@@ -295,7 +299,7 @@ const handlers = {
     if (!id || !payload.type || !payload.start)
       return { ok: false, error: 'Missing agent_id/type/start' };
     const days = dayDiffBusiness(payload.start, payload.end || payload.start);
-    const { data, error } = await sb.from('requests').insert({
+    const row = {
       staff_id: id,
       type: payload.type,
       start_date: payload.start,
@@ -303,7 +307,10 @@ const handlers = {
       days,
       reason: payload.reason || '',
       status: 'Pending',
-    }).select().single();
+    };
+    if (payload.proposed_start) row.proposed_start = payload.proposed_start;
+    if (payload.proposed_end)   row.proposed_end   = payload.proposed_end;
+    const { data, error } = await sb.from('requests').insert(row).select().single();
     if (error) return { ok: false, error: error.message };
     return { ok: true, id: data.id };
   },
@@ -356,11 +363,33 @@ const handlers = {
         id: payload.id, name: payload.name, pin: payload.pin,
         role: payload.role || '', team: payload.team || '',
         admin: !!payload.admin, active: payload.active !== false,
+        hourly_rate:  payload.hourly_rate ?? null,
+        weekly_hours: payload.weekly_hours ?? null,
       }),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.ok) return { ok: false, error: body.error || 'Could not create staff' };
     return { ok: true, agent: body.staff };
+  },
+
+  async staff_update(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
+    const id = String(payload.id || '').toLowerCase();
+    if (!id) return { ok: false, error: 'Missing id' };
+    const patch = {};
+    if (payload.name != null)         patch.name = String(payload.name);
+    if (payload.role != null)         patch.role = String(payload.role);
+    if (payload.team != null)         patch.team = String(payload.team);
+    if (payload.admin != null)        patch.is_admin = !!payload.admin;
+    if (payload.active != null)       patch.active = String(payload.active).toLowerCase() !== 'false';
+    if (payload.hourly_rate !== undefined)
+      patch.hourly_rate = (payload.hourly_rate === '' || payload.hourly_rate == null) ? null : Number(payload.hourly_rate);
+    if (payload.weekly_hours !== undefined)
+      patch.weekly_hours = (payload.weekly_hours === '' || payload.weekly_hours == null) ? null : Number(payload.weekly_hours);
+    const { error } = await sb.from('staff').update(patch).eq('id', id);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
   },
 
   async roster_set_active(payload) {
