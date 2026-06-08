@@ -200,11 +200,10 @@ async function loadTimesheet() {
   state.timesheet = buildTimesheet(data.events, now);
 }
 async function loadLeave() {
+  // "leave" name kept for state continuity; this tab is now Requests
+  // (shift-time corrections only — no annual/sick/family leave).
   const data = await api('leave_list', { agent_id: state.agent.id });
-  state.leave = {
-    balances: defaultBalances(data.leave || []),
-    requests: data.leave || [],
-  };
+  state.leave = { requests: data.leave || [] };
 }
 async function loadTeam() {
   const data = await api('team_today', {});
@@ -282,17 +281,6 @@ function buildTimesheet(events, now) {
   };
 }
 
-function defaultBalances(requests) {
-  // Simple v1: hardcoded totals, deduct approved annual leave days
-  const used = (type) => requests
-    .filter(r => r.status === 'Approved' && (r.type || '').toLowerCase().includes(type))
-    .reduce((s, r) => s + (Number(r.days) || 0), 0);
-  return [
-    { label: 'Annual', used: used('annual'), total: 22, color: 'var(--blue)'   },
-    { label: 'Sick',   used: used('sick'),   total: 6,  color: 'var(--sky)'    },
-    { label: 'Family', used: used('family'), total: 3,  color: 'var(--yellow)' },
-  ];
-}
 
 // ───── RENDER ────────────────────────────────────────────────────────
 function render() {
@@ -598,29 +586,33 @@ function renderNoteSheet() {
 }
 
 function renderLeaveSheet() {
+  // Shift-time correction only. Pre-filled with today so it's fast to file.
   const s = state.sheet;
-  const choice = s.type_choice || 'Annual leave';
-  const isShift = choice === 'Shift change';
-  const types = ['Annual leave', 'Sick leave', 'Family responsibility', 'Shift change'];
+  const today = new Date().toISOString().slice(0, 10);
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
     <div class="sheet">
       <div class="sheet-grip"></div>
       <div style="display:flex;align-items:center;gap:9px">
-        ${icon('calendar', 22, 'var(--blue)')}
+        ${icon('clock', 22, 'var(--blue)')}
         <div>
-          <h2>Submit a request</h2>
-          <div style="font-size:12.5px;font-weight:600;color:var(--muted);margin-top:1px">Leave or shift change · admin reviews</div>
+          <h2>Shift-time change request</h2>
+          <div style="font-size:12.5px;font-weight:600;color:var(--muted);margin-top:1px">e.g. you forgot to clock in at 8 — let admin know the real times</div>
         </div>
       </div>
-      <select id="reqType" style="margin-top:14px">
-        ${types.map(t => `<option ${t === choice ? 'selected' : ''}>${t}</option>`).join('')}
-      </select>
+      <label style="display:block;margin-top:14px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Date</label>
+      <input id="reqFrom" type="date" value="${s.start || today}" style="margin-top:4px">
       <div style="display:flex;gap:10px;margin-top:10px">
-        <input id="reqFrom" type="date" value="${s.start || ''}" style="flex:1">
-        <input id="reqTo" type="date" value="${s.end || ''}" style="flex:1">
+        <div style="flex:1">
+          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Started at</label>
+          <input id="reqStartTime" type="time" value="${s.start_time || '08:00'}" style="margin-top:4px">
+        </div>
+        <div style="flex:1">
+          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Finished at</label>
+          <input id="reqEndTime" type="time" value="${s.end_time || '17:00'}" style="margin-top:4px">
+        </div>
       </div>
-      <textarea id="reqReason" placeholder="${isShift ? 'Shift change details — e.g. swap Monday with Pieter' : 'Reason (optional)'}" style="margin-top:10px;min-height:60px">${escapeHtml(s.reason || '')}</textarea>
+      <textarea id="reqReason" placeholder="What happened? (e.g. forgot to clock in, system was down)" style="margin-top:10px;min-height:60px">${escapeHtml(s.reason || '')}</textarea>
       <button class="btn-cta blue" id="sheetGo">SUBMIT REQUEST</button>
     </div>
   </div>`;
@@ -662,9 +654,9 @@ function wireSheet() {
     });
   }
   if (state.sheet.type === 'request') {
-    document.getElementById('reqType').addEventListener('change', e => state.sheet.type_choice = e.target.value);
     document.getElementById('reqFrom').addEventListener('change', e => state.sheet.start = e.target.value);
-    document.getElementById('reqTo').addEventListener('change', e => state.sheet.end = e.target.value);
+    document.getElementById('reqStartTime').addEventListener('change', e => state.sheet.start_time = e.target.value);
+    document.getElementById('reqEndTime').addEventListener('change', e => state.sheet.end_time = e.target.value);
     document.getElementById('reqReason').addEventListener('input', e => state.sheet.reason = e.target.value);
     document.getElementById('sheetGo').addEventListener('click', submitRequest);
   }
@@ -672,14 +664,19 @@ function wireSheet() {
 
 async function submitRequest() {
   const s = state.sheet || {};
-  const type = s.type_choice || document.getElementById('reqType').value;
-  const start = s.start || document.getElementById('reqFrom').value;
-  const end = s.end || document.getElementById('reqTo').value || start;
+  const date = s.start || document.getElementById('reqFrom').value;
+  const st   = s.start_time || document.getElementById('reqStartTime').value;
+  const et   = s.end_time   || document.getElementById('reqEndTime').value;
   const reason = s.reason || document.getElementById('reqReason').value;
-  if (!start) { showToast('Pick a start date'); return; }
+  if (!date) { showToast('Pick the date of the shift'); return; }
+  if (!st || !et) { showToast('Pick start and finish times'); return; }
   try {
     await api('leave_create', {
-      agent_id: state.agent.id, type, start, end: end || start, reason: reason || '',
+      agent_id: state.agent.id,
+      type: 'Shift change',
+      start: date, end: date,
+      proposed_start: st, proposed_end: et,
+      reason: reason || '',
     });
     state.sheet = null;
     showToast('Request submitted');
@@ -773,21 +770,15 @@ function exportTimesheetCSV() {
 // ───── REQUESTS (leave + shift changes) ─────────────────────────────
 function renderLeave() {
   const lv = state.leave;
-  const head = renderHeader({ title: 'Requests', sub: 'Leave balances & shift changes' });
+  const head = renderHeader({ title: 'Requests', sub: 'Shift-time corrections' });
   if (!lv) return head + (state.loading ? '<div class="loading">Loading…</div>' : '<div class="loading">No data</div>');
-  const remaining = (b) => Math.max(0, b.total - b.used);
+  const tFmt = (t) => (t ? String(t).slice(0, 5) : '');
   return `${head}
     <div class="content tight">
-      <div class="row">
-        ${lv.balances.map(b => `
-          <div class="card bal">
-            <div class="l">${b.label}</div>
-            <div class="v"><b>${remaining(b)}</b><span class="u">days</span></div>
-            <div class="bar2"><div style="width:${Math.min(100, (b.used / b.total) * 100).toFixed(0)}%;background:${b.color}"></div></div>
-          </div>
-        `).join('')}
+      <div class="card pad-sm" style="text-align:left;font-size:13px;color:var(--muted);line-height:1.5">
+        Use this to ask admin to correct a shift — for example if you forgot to clock in at 8am.
       </div>
-      <button class="btn-cta ok" id="leaveBtn" style="margin-top:16px">
+      <button class="btn-cta ok" id="leaveBtn" style="margin-top:14px">
         ${icon('plus', 22, 'var(--ink)', 2.4)} NEW REQUEST
       </button>
       <div class="section-title">Your requests</div>
@@ -796,12 +787,14 @@ function renderLeave() {
         ${(lv.requests || []).map(r => {
           const cls = (r.status === 'Approved' ? 'pill-approved'
                     : r.status === 'Declined' ? 'pill-declined' : 'pill-pending');
-          const isShift = (r.type || '').toLowerCase().includes('shift');
+          const times = (r.proposed_start || r.proposed_end)
+            ? `${tFmt(r.proposed_start) || '—'} → ${tFmt(r.proposed_end) || '—'}`
+            : '';
           return `<div class="card req-row">
-              <div class="ic">${icon(isShift ? 'clock' : 'calendar', 20, 'var(--blue)')}</div>
+              <div class="ic">${icon('clock', 20, 'var(--blue)')}</div>
               <div class="body">
-                <div class="t">${escapeHtml(r.type || 'Request')}</div>
-                <div class="m">${escapeHtml(formatDateRange(r.start_date, r.end_date))} · ${r.days || 1} ${(r.days || 1) === 1 ? 'day' : 'days'}</div>
+                <div class="t">${escapeHtml(formatDateRange(r.start_date, r.end_date))}</div>
+                <div class="m">${escapeHtml(times || (r.reason || ''))}</div>
               </div>
               <span class="pill ${cls}"><span class="dot"></span>${escapeHtml(r.status || 'Pending')}</span>
           </div>`;
@@ -813,7 +806,7 @@ function renderLeave() {
 function wireLeave() {
   const btn = document.getElementById('leaveBtn');
   if (btn) btn.addEventListener('click', () => {
-    state.sheet = { type: 'request', type_choice: 'Annual leave', start: '', end: '', reason: '' };
+    state.sheet = { type: 'request', start: '', end: '', start_time: '08:00', end_time: '17:00', reason: '' };
     render();
   });
 }

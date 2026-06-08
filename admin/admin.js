@@ -36,6 +36,7 @@ const state = {
   },
   tsPeriod: 'this-week', // this-week | last-week | this-month | last-month
   tsDetail: null,        // { agentId, agentName } when detail modal open
+  payroll: null,         // { from, to, events: [...] } once fetched
 };
 
 const $root = document.getElementById('admin');
@@ -267,6 +268,7 @@ function renderSidebar() {
   const items = [
     ['dashboard','grid','Dashboard'],
     ['timesheets','clipboard','Timesheets'],
+    ['payroll','chart','Payroll'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
   ];
@@ -297,6 +299,7 @@ function renderTopNav() {
   const items = [
     ['dashboard','grid','Dashboard'],
     ['timesheets','clipboard','Timesheets'],
+    ['payroll','chart','Payroll'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
   ];
@@ -320,7 +323,8 @@ function renderTopNav() {
 const TITLES = {
   dashboard:  ['Dashboard',  'Live overview of your team today'],
   timesheets: ['Timesheets', 'Review & approve hours'],
-  leave:      ['Requests',   'Leave & shift-change requests'],
+  payroll:    ['Payroll',    'Pro-rata pay — hours × rate'],
+  leave:      ['Requests',   'Shift-time corrections'],
   team:       ['Team',       'Staff directory & status'],
 };
 function renderTopbar() {
@@ -374,6 +378,7 @@ function wireShell() {
   if (state.view === 'leave')      wireLeave();
   if (state.view === 'timesheets') wireTimesheets();
   if (state.view === 'team')       wireTeam();
+  if (state.view === 'payroll')    wirePayroll();
   applySearchFilter();
 }
 
@@ -393,6 +398,7 @@ function renderView() {
   switch (state.view) {
     case 'dashboard':  return renderDashboard();
     case 'timesheets': return renderTimesheets();
+    case 'payroll':    return renderPayroll();
     case 'leave':      return renderLeave();
     case 'team':       return renderTeam();
     default:           return '';
@@ -403,18 +409,16 @@ function renderView() {
 function renderDashboard() {
   const team = state.data.team || [];
   const onNow = team.filter(s => s.status === 'in').length;
-  const onLeave = (state.data.leave || []).filter(l =>
-    l.status === 'Approved' && isToday(l.start_date, l.end_date)
-  );
   const hoursToday = team.reduce((s, t) => s + (t.todayHrs || 0), 0);
   const pending = (state.data.leave || []).filter(l => l.status === 'Pending');
+  const offToday = team.filter(s => s.status !== 'in').length;
 
   return `
     <div class="stat-row">
-      ${statCard('clock', 'var(--green)', 'var(--greenBg)', 'On the clock', String(onNow), `of ${team.length} staff`)}
+      ${statCard('clock',     'var(--green)', 'var(--greenBg)', 'On the clock',   String(onNow), `of ${team.length} staff`)}
       ${statCard('clipboard', 'var(--amber)', 'var(--amberBg)', 'Pending requests', String(pending.length), pending.length ? 'needs your review' : 'all caught up')}
-      ${statCard('calendar', 'var(--blue)', 'var(--skySoft)', 'On leave', String(onLeave.length), onLeave.map(l => l.agent_name).join(', ') || '—')}
-      ${statCard('chart', 'var(--ink)', '#EEF0F6', 'Hours logged today', fmtHM(hoursToday), 'across the team')}
+      ${statCard('users',     'var(--blue)',  'var(--skySoft)', 'Not in yet',     String(offToday), 'staff still clocked out')}
+      ${statCard('chart',     'var(--ink)',   '#EEF0F6',        'Hours today',    fmtHM(hoursToday), 'across the team')}
     </div>
 
     <div class="dash-grid">
@@ -1026,7 +1030,7 @@ function weekLabel(monday) {
   return `${sd} ${monday.toLocaleDateString('en-GB', { month: 'short' })} – ${ed} ${sun.toLocaleDateString('en-GB', { month: 'short' })}`;
 }
 
-// ───── LEAVE ─────────────────────────────────────────────────────────
+// ───── REQUESTS (shift-time corrections only) ───────────────────────
 function renderLeave() {
   const leave = state.data.leave || [];
   const counts = {
@@ -1034,25 +1038,25 @@ function renderLeave() {
     Approved: leave.filter(l => l.status === 'Approved').length,
     Declined: leave.filter(l => l.status === 'Declined').length,
   };
-  const outToday = leave.filter(l => l.status === 'Approved' && isToday(l.start_date, l.end_date)).length;
+  const t = (v) => v ? String(v).slice(0, 5) : '';
   return `
     <div class="stat-row">
-      ${statCard('calendar', 'var(--amber)', 'var(--amberBg)', 'Pending requests', String(counts.Pending), 'Needs your review')}
-      ${statCard('check', 'var(--green)', 'var(--greenBg)', 'Approved (all-time)', String(counts.Approved), 'Across the team')}
-      ${statCard('users', 'var(--blue)', 'var(--skySoft)', 'Out today', String(outToday), 'on approved leave')}
-      ${statCard('sun', 'var(--ink)', '#EEF0F6', 'Total declined', String(counts.Declined), '')}
+      ${statCard('clipboard', 'var(--amber)', 'var(--amberBg)', 'Pending', String(counts.Pending), 'Need your review')}
+      ${statCard('check',     'var(--green)', 'var(--greenBg)', 'Approved (all-time)', String(counts.Approved), 'Across the team')}
+      ${statCard('users',     'var(--blue)',  'var(--skySoft)', 'Declined (all-time)', String(counts.Declined), '')}
+      ${statCard('clock',     'var(--ink)',   '#EEF0F6',        'Total requests', String(leave.length), '')}
     </div>
 
     <div class="card" style="overflow:hidden;margin-top:18px">
-      <div class="card-head"><h3>All requests</h3>
+      <div class="card-head"><h3>Shift-change requests</h3>
         <button class="btn small" id="lvCsv">${icon('download', 15)} CSV</button>
       </div>
       <table>
         <thead><tr>
-          <th>Employee</th><th>Type</th><th>Dates</th><th>Reason</th><th>Status</th><th class="r">Actions</th>
+          <th>Employee</th><th>Shift date</th><th>Proposed times</th><th>Reason</th><th>Status</th><th class="r">Actions</th>
         </tr></thead>
         <tbody>
-          ${leave.length === 0 ? `<tr><td colspan="6" class="muted" style="text-align:center;padding:30px">No leave requests yet.</td></tr>` : ''}
+          ${leave.length === 0 ? `<tr><td colspan="6" class="muted" style="text-align:center;padding:30px">No requests yet.</td></tr>` : ''}
           ${leave.map(l => `<tr data-leave="${l.id}">
             <td>
               <div class="nm">
@@ -1060,9 +1064,9 @@ function renderLeave() {
                 <div class="who"><div class="n">${escapeHtml(l.agent_name)}</div></div>
               </div>
             </td>
-            <td>${escapeHtml(l.type)}<div class="muted" style="font-size:11.5px;font-weight:500">${l.days || 1} ${(l.days || 1) === 1 ? 'day' : 'days'}</div></td>
-            <td>${escapeHtml(l.dates || fmtDateRange(l.start_date, l.end_date))}</td>
-            <td class="muted" style="max-width:240px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(l.reason || '—')}</div></td>
+            <td>${escapeHtml(fmtDateRange(l.start_date, l.end_date))}</td>
+            <td class="tnum" style="font-weight:700">${escapeHtml(t(l.proposed_start) || '—')} – ${escapeHtml(t(l.proposed_end) || '—')}</td>
+            <td class="muted" style="max-width:260px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(l.reason || '—')}</div></td>
             <td><span class="pill-st ${escapeHtml(l.status)}">${escapeHtml(l.status)}</span></td>
             <td class="r">
               ${l.status === 'Pending' ? `
@@ -1096,52 +1100,82 @@ function renderTeam() {
     </div>
     <div class="team-grid">
       ${roster.length === 0 ? `<div class="empty card" style="grid-column:1/-1">No staff yet — click <b>+ Add staff</b> to add your first.</div>` : ''}
-      ${roster.map((s, i) => `<div class="card team-card" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
-        <div class="top">
-          <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px">${initials(s.name)}</div>
-          <div style="min-width:0">
-            <div class="name">${escapeHtml(s.name)}${s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : ''}</div>
-            <div class="role">${escapeHtml(s.role || '')}</div>
+      ${roster.map((s, i) => {
+        const rate = s.hourly_rate != null ? `R${Number(s.hourly_rate).toFixed(2)}/hr` : 'No rate set';
+        const hrs = s.weekly_hours != null ? `${Number(s.weekly_hours)}h/week` : 'No target';
+        return `<div class="card team-card" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
+          <div class="top">
+            <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px">${initials(s.name)}</div>
+            <div style="min-width:0;flex:1">
+              <div class="name">${escapeHtml(s.name)}${s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : ''}</div>
+              <div class="role">${escapeHtml(s.role || '')}</div>
+            </div>
+            <button class="btn small" data-edit-staff="${escapeHtml(s.id)}">Edit</button>
           </div>
-        </div>
-        <div style="margin-top:14px">${tagFor(s.status)}</div>
-        <div class="meta">
-          <div class="li">${icon('users', 14, 'var(--muted)')}@${escapeHtml(s.id || '—')}</div>
-          <div class="li">${icon('pin', 14, 'var(--muted)')}${escapeHtml(s.lastLoc || '—')}</div>
-        </div>
-      </div>`).join('')}
+          <div style="margin-top:14px">${tagFor(s.status)}</div>
+          <div class="meta">
+            <div class="li">${icon('users', 14, 'var(--muted)')}@${escapeHtml(s.id || '—')}</div>
+            <div class="li">${icon('clock', 14, 'var(--muted)')}${escapeHtml(rate)} · ${escapeHtml(hrs)}</div>
+          </div>
+        </div>`;
+      }).join('')}
     </div>
-    ${state.addStaff ? renderAddStaffModal() : ''}
+    ${state.staffModal ? renderStaffModal() : ''}
   `;
 }
 
 function wireTeam() {
   const btn = document.getElementById('addStaffBtn');
   if (btn) btn.addEventListener('click', () => {
-    state.addStaff = { name: '', id: '', role: '', team: '', pin: '', admin: false, error: '', busy: false };
+    state.staffModal = { mode: 'add', name: '', id: '', role: '', team: '', pin: '',
+                        admin: false, hourly_rate: '', weekly_hours: '',
+                        error: '', busy: false };
     render();
   });
-  if (state.addStaff) wireAddStaffModal();
+  document.querySelectorAll('button[data-edit-staff]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.editStaff;
+    const s = (state.data.roster || []).find(x => x.id === id);
+    if (!s) return;
+    state.staffModal = {
+      mode: 'edit',
+      id: s.id, name: s.name, role: s.role || '', team: s.team || '',
+      pin: '', admin: !!s.admin,
+      hourly_rate: s.hourly_rate != null ? String(s.hourly_rate) : '',
+      weekly_hours: s.weekly_hours != null ? String(s.weekly_hours) : '',
+      active: true, error: '', busy: false,
+    };
+    render();
+  }));
+  if (state.staffModal) wireStaffModal();
 }
 
-function renderAddStaffModal() {
-  const f = state.addStaff;
+// One modal handles both add + edit. f.mode = 'add' | 'edit'.
+function renderStaffModal() {
+  const f = state.staffModal;
+  const isEdit = f.mode === 'edit';
   const err = f.error || '';
   return `
     <div class="modal-back" id="staffBack"></div>
     <div class="modal" role="dialog">
       <div class="modal-head">
-        <h3>Add a staff member</h3>
+        <h3>${isEdit ? 'Edit ' + escapeHtml(f.name) : 'Add a staff member'}</h3>
         <button class="modal-close" id="staffClose" aria-label="Close">${icon('x', 18, 'var(--muted)')}</button>
       </div>
       <div class="modal-body">
         <label class="field"><span>Name</span>
-          <input id="sfName" type="text" value="${escapeHtml(f.name)}" placeholder="e.g. Thandi Mokoena" autofocus>
+          <input id="sfName" type="text" value="${escapeHtml(f.name)}" placeholder="e.g. Thandi Mokoena" ${isEdit ? '' : 'autofocus'}>
         </label>
-        <label class="field"><span>Username</span>
-          <input id="sfId" type="text" value="${escapeHtml(f.id)}" placeholder="auto from name — lowercase, no spaces" autocapitalize="off" autocomplete="off">
-          <div class="hint">Used as the login id. Auto-generated from name; edit to override.</div>
-        </label>
+        ${isEdit ? `
+          <label class="field"><span>Username</span>
+            <input type="text" value="${escapeHtml(f.id)}" disabled>
+            <div class="hint">Username can't be changed after creation.</div>
+          </label>
+        ` : `
+          <label class="field"><span>Username</span>
+            <input id="sfId" type="text" value="${escapeHtml(f.id)}" placeholder="auto from name — lowercase, no spaces" autocapitalize="off" autocomplete="off">
+            <div class="hint">Used as the login id. Auto-generated from name; edit to override.</div>
+          </label>
+        `}
         <div class="field-row">
           <label class="field"><span>Role</span>
             <input id="sfRole" type="text" value="${escapeHtml(f.role)}" placeholder="Sales Agent">
@@ -1150,9 +1184,19 @@ function renderAddStaffModal() {
             <input id="sfTeam" type="text" value="${escapeHtml(f.team)}" placeholder="Sales">
           </label>
         </div>
-        <label class="field"><span>PIN</span>
-          <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${escapeHtml(f.pin)}" placeholder="4 digits — they'll use this to log in">
-        </label>
+        <div class="field-row">
+          <label class="field"><span>Hourly rate (R)</span>
+            <input id="sfRate" type="number" step="0.01" min="0" value="${escapeHtml(f.hourly_rate)}" placeholder="e.g. 75.00">
+          </label>
+          <label class="field"><span>Weekly hours</span>
+            <input id="sfHours" type="number" step="0.5" min="0" max="80" value="${escapeHtml(f.weekly_hours)}" placeholder="e.g. 40">
+          </label>
+        </div>
+        ${isEdit ? '' : `
+          <label class="field"><span>PIN</span>
+            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${escapeHtml(f.pin)}" placeholder="4 digits — they'll use this to log in">
+          </label>
+        `}
         <label class="check">
           <input id="sfAdmin" type="checkbox" ${f.admin ? 'checked' : ''}>
           <span>Admin — can open this dashboard</span>
@@ -1161,62 +1205,81 @@ function renderAddStaffModal() {
       </div>
       <div class="modal-foot">
         <button class="btn" id="staffCancel">Cancel</button>
-        <button class="btn primary" id="staffSave" ${f.busy ? 'disabled' : ''}>${f.busy ? 'Adding…' : 'Add staff'}</button>
+        <button class="btn primary" id="staffSave" ${f.busy ? 'disabled' : ''}>${f.busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Add staff')}</button>
       </div>
     </div>`;
 }
 
-function wireAddStaffModal() {
-  const close = () => { state.addStaff = null; render(); };
+function wireStaffModal() {
+  const close = () => { state.staffModal = null; render(); };
   document.getElementById('staffBack').addEventListener('click', close);
   document.getElementById('staffClose').addEventListener('click', close);
   document.getElementById('staffCancel').addEventListener('click', close);
 
-  const f = state.addStaff;
-  const name = document.getElementById('sfName');
-  const idIn = document.getElementById('sfId');
-  const role = document.getElementById('sfRole');
-  const team = document.getElementById('sfTeam');
-  const pin  = document.getElementById('sfPin');
-  const adm  = document.getElementById('sfAdmin');
+  const f = state.staffModal;
+  const isEdit = f.mode === 'edit';
+  const name  = document.getElementById('sfName');
+  const idIn  = document.getElementById('sfId'); // null in edit mode
+  const role  = document.getElementById('sfRole');
+  const team  = document.getElementById('sfTeam');
+  const rate  = document.getElementById('sfRate');
+  const hours = document.getElementById('sfHours');
+  const pin   = document.getElementById('sfPin');
+  const adm   = document.getElementById('sfAdmin');
 
-  // Auto-slug the username from name UNTIL the user types in the id field.
+  // Auto-slug the username from name (add mode only) until user touches id.
   let idTouched = !!f.id;
   name.addEventListener('input', () => {
     f.name = name.value;
-    if (!idTouched) {
+    if (!isEdit && !idTouched && idIn) {
       const slug = name.value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
-      idIn.value = slug;
-      f.id = slug;
+      idIn.value = slug; f.id = slug;
     }
   });
-  idIn.addEventListener('input', () => { idTouched = true; f.id = idIn.value; });
-  role.addEventListener('input', () => { f.role = role.value; });
-  team.addEventListener('input', () => { f.team = team.value; });
-  pin.addEventListener('input', () => { f.pin = pin.value.replace(/[^0-9]/g, '').slice(0, 4); pin.value = f.pin; });
+  if (idIn) idIn.addEventListener('input', () => { idTouched = true; f.id = idIn.value; });
+  role.addEventListener('input',  () => { f.role  = role.value; });
+  team.addEventListener('input',  () => { f.team  = team.value; });
+  rate.addEventListener('input',  () => { f.hourly_rate  = rate.value; });
+  hours.addEventListener('input', () => { f.weekly_hours = hours.value; });
+  if (pin) pin.addEventListener('input', () => { f.pin = pin.value.replace(/[^0-9]/g, '').slice(0, 4); pin.value = f.pin; });
   adm.addEventListener('change', () => { f.admin = adm.checked; });
 
-  document.getElementById('staffSave').addEventListener('click', submitAddStaff);
+  document.getElementById('staffSave').addEventListener('click', submitStaffModal);
 }
 
-async function submitAddStaff() {
-  const f = state.addStaff;
+async function submitStaffModal() {
+  const f = state.staffModal;
   if (!f) return;
   f.error = '';
   if (!f.name.trim()) { f.error = 'Name is required'; render(); return; }
-  if (f.pin.length !== 4) { f.error = 'PIN must be 4 digits'; render(); return; }
+  if (f.mode === 'add' && (!f.pin || f.pin.length !== 4)) {
+    f.error = 'PIN must be 4 digits'; render(); return;
+  }
   f.busy = true; render();
   try {
-    await api('roster_add', {
-      admin_pin: state.admin.pin,
-      name: f.name.trim(),
-      id: f.id.trim() || f.name,
-      role: f.role.trim(),
-      team: f.team.trim(),
-      pin: f.pin,
-      admin: !!f.admin,
-    });
-    state.addStaff = null;
+    if (f.mode === 'add') {
+      await api('roster_add', {
+        name: f.name.trim(),
+        id: f.id.trim() || f.name,
+        role: f.role.trim(),
+        team: f.team.trim(),
+        pin: f.pin,
+        admin: !!f.admin,
+        hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
+        weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
+      });
+    } else {
+      await api('staff_update', {
+        id: f.id,
+        name: f.name.trim(),
+        role: f.role.trim(),
+        team: f.team.trim(),
+        admin: !!f.admin,
+        hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
+        weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
+      });
+    }
+    state.staffModal = null;
     await loadAll();
     render();
   } catch (e) {
@@ -1230,7 +1293,8 @@ async function submitAddStaff() {
 function exportCurrent() {
   if (state.view === 'dashboard' || state.view === 'team') exportTeamCSV();
   else if (state.view === 'timesheets') exportTimesheetsCSV();
-  else if (state.view === 'leave') exportLeaveCSV();
+  else if (state.view === 'leave')      exportLeaveCSV();
+  else if (state.view === 'payroll')    exportPayrollCSV();
 }
 function exportTeamCSV() {
   const team = state.data.team || [];
@@ -1281,6 +1345,147 @@ function statusLabel(s) {
   if (s === 'break') return 'On break';
   if (s === 'leave') return 'On leave';
   return 'Clocked out';
+}
+
+// ───── PAYROLL ──────────────────────────────────────────────────────
+function renderPayroll() {
+  // Default range = current calendar month.
+  if (!state.payroll) {
+    const now = new Date();
+    state.payroll = {
+      from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10),
+      to:   new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().slice(0,10),
+      events: null, loading: false,
+    };
+  }
+  const p = state.payroll;
+  const roster = state.data.roster || [];
+
+  // Aggregate hours per agent for the range from cached events (loaded on demand).
+  const rows = roster.map((s, i) => {
+    const hrs = (p.events || [])
+      .filter(e => e.id === s.id && e.action === 'out' && e.duration_hrs != null)
+      .reduce((acc, e) => acc + Number(e.duration_hrs || 0), 0);
+    const rate = s.hourly_rate != null ? Number(s.hourly_rate) : null;
+    const pay = rate != null ? hrs * rate : null;
+    return { i, s, hrs, rate, pay };
+  });
+  const totalHrs = rows.reduce((acc, r) => acc + r.hrs, 0);
+  const totalPay = rows.reduce((acc, r) => acc + (r.pay || 0), 0);
+  const moneyZA = (v) => v == null ? '—' : 'R' + Number(v).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  return `
+    <div class="card pad" style="margin-bottom:18px">
+      <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px">
+        <div>
+          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Pay period start</label>
+          <input id="payFrom" type="date" value="${p.from}" style="margin-top:4px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font-family:Montserrat;font-size:14px">
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">End</label>
+          <input id="payTo" type="date" value="${p.to}" style="margin-top:4px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font-family:Montserrat;font-size:14px">
+        </div>
+        <button class="btn primary" id="payCalc" ${p.loading ? 'disabled' : ''}>${p.loading ? 'Loading…' : 'Calculate'}</button>
+        <button class="btn small" id="payCsv">${icon('download', 15)} Export CSV</button>
+        <div class="seg-pills" style="margin-left:auto">
+          <button class="seg-btn" data-pay-preset="this-week">This Week</button>
+          <button class="seg-btn" data-pay-preset="last-week">Last Week</button>
+          <button class="seg-btn" data-pay-preset="this-month">This Month</button>
+          <button class="seg-btn" data-pay-preset="last-month">Last Month</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="overflow:hidden">
+      <div class="card-head">
+        <h3>Pro-rata pay · ${escapeHtml(p.from)} → ${escapeHtml(p.to)}</h3>
+        <span class="muted" style="font-size:13px">${rows.length} staff · ${fmtHM(totalHrs)} total · <b style="color:var(--ink)">${moneyZA(totalPay)}</b></span>
+      </div>
+      ${p.events == null ? `<div class="muted" style="padding:30px;text-align:center">Pick a range and click <b>Calculate</b>.</div>` : `
+        <table>
+          <thead><tr>
+            <th>Employee</th>
+            <th class="ctr">Hours</th>
+            <th class="ctr">Rate</th>
+            <th class="ctr">Contracted</th>
+            <th class="r">Pay</th>
+          </tr></thead>
+          <tbody>
+            ${rows.length === 0 ? `<tr><td colspan="5" class="muted" style="text-align:center;padding:30px">No staff in the roster.</td></tr>` : ''}
+            ${rows.map(r => `<tr data-search="${escapeHtml(((r.s.name||'') + ' ' + (r.s.role||'') + ' ' + r.s.id).toLowerCase())}">
+              <td>
+                <div class="nm">
+                  <div class="av" style="background:${avColor(r.i)};width:32px;height:32px;font-size:12px">${initials(r.s.name)}</div>
+                  <div class="who"><div class="n">${escapeHtml(r.s.name)}</div><div class="r">${escapeHtml(r.s.role || '')}</div></div>
+                </div>
+              </td>
+              <td class="ctr tnum" style="font-weight:700;color:var(--blue)">${fmtHM(r.hrs)}</td>
+              <td class="ctr tnum">${r.rate == null ? '<span class="muted">—</span>' : moneyZA(r.rate) + '/hr'}</td>
+              <td class="ctr tnum">${r.s.weekly_hours != null ? Number(r.s.weekly_hours) + 'h/wk' : '<span class="muted">—</span>'}</td>
+              <td class="r tnum" style="font-weight:800;${r.pay != null ? 'color:var(--ink)' : ''}">${moneyZA(r.pay)}</td>
+            </tr>`).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="background:var(--paper);font-weight:800">
+              <td>Total</td>
+              <td class="ctr tnum" style="color:var(--blue)">${fmtHM(totalHrs)}</td>
+              <td></td><td></td>
+              <td class="r tnum" style="font-size:15px;color:var(--ink)">${moneyZA(totalPay)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      `}
+    </div>
+  `;
+}
+
+function wirePayroll() {
+  const p = state.payroll;
+  const fromEl = document.getElementById('payFrom');
+  const toEl   = document.getElementById('payTo');
+  if (fromEl) fromEl.addEventListener('change', () => { p.from = fromEl.value; });
+  if (toEl)   toEl.addEventListener('change',   () => { p.to   = toEl.value; });
+
+  document.querySelectorAll('[data-pay-preset]').forEach(b => b.addEventListener('click', () => {
+    const r = periodRange(b.dataset.payPreset);
+    p.from = r.from.toISOString().slice(0, 10);
+    p.to   = r.to.toISOString().slice(0, 10);
+    runPayrollCalc();
+  }));
+  const calc = document.getElementById('payCalc');
+  if (calc) calc.addEventListener('click', runPayrollCalc);
+
+  const csv = document.getElementById('payCsv');
+  if (csv) csv.addEventListener('click', exportPayrollCSV);
+}
+
+async function runPayrollCalc() {
+  const p = state.payroll;
+  p.loading = true; render();
+  try {
+    const fromIso = new Date(p.from + 'T00:00:00Z').toISOString();
+    const toIso   = new Date(p.to   + 'T23:59:59Z').toISOString();
+    const data = await api('events', { from: fromIso, to: toIso });
+    p.events = data.events || [];
+  } catch (e) {
+    state.error = e.message; p.events = [];
+  }
+  p.loading = false; render();
+}
+
+function exportPayrollCSV() {
+  const p = state.payroll; if (!p || !p.events) { runPayrollCalc(); return; }
+  const roster = state.data.roster || [];
+  const rows = [['Employee', 'Username', 'Role', 'Hours', 'Hourly rate', 'Pay (R)', 'Period start', 'Period end']];
+  roster.forEach(s => {
+    const hrs = (p.events || [])
+      .filter(e => e.id === s.id && e.action === 'out' && e.duration_hrs != null)
+      .reduce((acc, e) => acc + Number(e.duration_hrs || 0), 0);
+    const rate = s.hourly_rate != null ? Number(s.hourly_rate) : null;
+    const pay = rate != null ? (hrs * rate).toFixed(2) : '';
+    rows.push([s.name, s.id, s.role || '', hrs.toFixed(2), rate != null ? rate.toFixed(2) : '', pay, p.from, p.to]);
+  });
+  downloadCSV(`payroll-${p.from}-to-${p.to}.csv`, rows);
 }
 
 // ───── GATE (Admin sign-in: username + PIN) ──────────────────────────
