@@ -1607,7 +1607,35 @@ async function submitAdminPin() {
 // ───── BOOT ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', boot);
 
-// auto-refresh every 60s when signed in
-setInterval(() => { if (state.admin && document.visibilityState === 'visible') loadAll(); }, 60000);
+// ───── REALTIME ─────────────────────────────────────────────────────
+// Subscribe to events + requests via Supabase Realtime so changes
+// surface immediately (live who's-on-now, instant approval feedback).
+// Falls back to a 5-min poll in case the websocket drops.
+let _rtChannel = null;
+let _rtReloadTimer = null;
+function rtReload() {
+  // Debounce — collapse bursts (e.g. clock-in writes an 'in' row, then an
+  // 'out' a moment later) into a single reload.
+  clearTimeout(_rtReloadTimer);
+  _rtReloadTimer = setTimeout(() => {
+    if (state.admin && document.visibilityState === 'visible') loadAll();
+  }, 1500);
+}
+function subscribeRealtime() {
+  if (_rtChannel || !state.admin || !window.sb) return;
+  try {
+    _rtChannel = window.sb
+      .channel('admin-feed')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'events' },   rtReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, rtReload)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff' },    rtReload)
+      .subscribe();
+  } catch (e) { console.warn('[rt] subscribe failed', e); }
+}
+// Wire the subscription as soon as we have an admin session. boot() may run
+// before state.admin is set, so re-attempt opportunistically.
+setInterval(subscribeRealtime, 2000);
+// Belt-and-suspenders: a slow poll in case the websocket dies silently.
+setInterval(() => { if (state.admin && document.visibilityState === 'visible') loadAll(); }, 5 * 60 * 1000);
 
 })();
