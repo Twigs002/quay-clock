@@ -20,8 +20,7 @@ if (EMBED) document.documentElement.classList.add('embed');
 // ───── STATE ─────────────────────────────────────────────────────────
 const state = {
   admin: null,           // { id, name, role, ... } + pin (kept in memory for write actions)
-  view: 'hours',
-  hoursTab: 'live', // 'live' | 'sheets' | 'pay' — sub-tab within Hours
+  view: 'dashboard',
   loading: false,
   error: null,
   loginUser: '',
@@ -266,10 +265,10 @@ function render() {
 
 // ── Sidebar ──────────────────────────────────────────────────────────
 function renderSidebar() {
-  // Simplified — Dashboard/Timesheets/Payroll merged into "Hours" with
-  // a sub-pill strip (Live / Hours / Payroll) at the top of the view.
   const items = [
-    ['hours','clock','Hours'],
+    ['dashboard','grid','Dashboard'],
+    ['timesheets','clipboard','Timesheets'],
+    ['payroll','chart','Payroll'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
   ];
@@ -298,7 +297,9 @@ function renderSidebar() {
 // ── Top nav (embed mode) ─────────────────────────────────────────────
 function renderTopNav() {
   const items = [
-    ['hours','clock','Hours'],
+    ['dashboard','grid','Dashboard'],
+    ['timesheets','clipboard','Timesheets'],
+    ['payroll','chart','Payroll'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
   ];
@@ -320,11 +321,9 @@ function renderTopNav() {
 
 // ── Topbar ───────────────────────────────────────────────────────────
 const TITLES = {
-  hours:      ['Hours',      'Live status, timesheets, payroll'],
-  // Legacy keys kept so old sessions / deep links don't show "Untitled":
-  dashboard:  ['Hours',      'Live status, timesheets, payroll'],
-  timesheets: ['Hours',      'Live status, timesheets, payroll'],
-  payroll:    ['Hours',      'Live status, timesheets, payroll'],
+  dashboard:  ['Dashboard',  'Live overview of your team today'],
+  timesheets: ['Timesheets', 'Review & approve hours'],
+  payroll:    ['Payroll',    'Pro-rata pay — hours × rate'],
   leave:      ['Requests',   'Shift-time corrections'],
   team:       ['Team',       'Staff directory & status'],
 };
@@ -375,17 +374,11 @@ function wireShell() {
     });
   }
   // view-specific wiring
-  if (state.view === 'hours') {
-    const sub = state.hoursTab || 'live';
-    document.querySelectorAll('[data-hours-tab]').forEach(b => b.addEventListener('click', () => {
-      state.hoursTab = b.dataset.hoursTab; render();
-    }));
-    if (sub === 'live')   wireDashboard();
-    if (sub === 'sheets') wireTimesheets();
-    if (sub === 'pay')    wirePayroll();
-  }
+  if (state.view === 'dashboard')  wireDashboard();
   if (state.view === 'leave')      wireLeave();
+  if (state.view === 'timesheets') wireTimesheets();
   if (state.view === 'team')       wireTeam();
+  if (state.view === 'payroll')    wirePayroll();
   applySearchFilter();
 }
 
@@ -402,37 +395,14 @@ function applySearchFilter() {
 }
 
 function renderView() {
-  // Old top-level views (dashboard / timesheets / payroll) are now sub-tabs
-  // under the combined "Hours" view. Normalise the state so deep-links still work.
-  if (state.view === 'dashboard')  { state.view = 'hours'; state.hoursTab = state.hoursTab || 'live'; }
-  if (state.view === 'timesheets') { state.view = 'hours'; state.hoursTab = 'sheets'; }
-  if (state.view === 'payroll')    { state.view = 'hours'; state.hoursTab = 'pay'; }
   switch (state.view) {
-    case 'hours':      return renderHours();
+    case 'dashboard':  return renderDashboard();
+    case 'timesheets': return renderTimesheets();
+    case 'payroll':    return renderPayroll();
     case 'leave':      return renderLeave();
     case 'team':       return renderTeam();
     default:           return '';
   }
-}
-
-// Hours wrapper — pill strip on top, selected sub-view below.
-function renderHours() {
-  const sub = state.hoursTab || 'live';
-  const pills = [
-    ['live',   'Live'],
-    ['sheets', 'Timesheets'],
-    ['pay',    'Payroll'],
-  ].map(([k, label]) =>
-    `<button class="seg-btn ${k === sub ? 'on' : ''}" data-hours-tab="${k}">${label}</button>`
-  ).join('');
-  let body = '';
-  if (sub === 'live')   body = renderDashboard();
-  if (sub === 'sheets') body = renderTimesheets();
-  if (sub === 'pay')    body = renderPayroll();
-  return `
-    <div class="seg-pills" style="margin-bottom:14px">${pills}</div>
-    ${body}
-  `;
 }
 
 // ───── DASHBOARD ─────────────────────────────────────────────────────
