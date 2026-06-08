@@ -433,10 +433,10 @@ function renderDashboard() {
         <table>
           <thead><tr>
             <th>Employee</th><th>Status</th><th>Clock-in</th>
-            <th>Location</th><th>Today</th><th>Shift note</th>
+            <th>Today</th><th>Shift note</th>
           </tr></thead>
           <tbody>
-            ${team.length === 0 ? `<tr><td colspan="6" class="muted" style="text-align:center;padding:30px">No staff in the roster yet — add rows to the sheet.</td></tr>` : ''}
+            ${team.length === 0 ? `<tr><td colspan="5" class="muted" style="text-align:center;padding:30px">No staff in the roster yet.</td></tr>` : ''}
             ${team.map((s, i) => `<tr class="${(s.status === 'off' || s.status === 'leave') ? 'dim' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
               <td>
                 <div class="nm">
@@ -446,9 +446,8 @@ function renderDashboard() {
               </td>
               <td>${tagFor(s.status)}</td>
               <td class="tnum">${s.cin || '—'}</td>
-              <td>${s.loc ? `<span class="pin">${icon('pin', 14, 'var(--blue)')}${escapeHtml(s.loc)}</span>` : '<span class="muted">—</span>'}</td>
               <td class="tnum" style="color:var(--blue);font-weight:800">${fmtHM(s.todayHrs || 0)}</td>
-              <td class="muted" style="max-width:240px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.note || '—')}</div></td>
+              <td class="muted" style="max-width:280px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.note || '—')}</div></td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -872,7 +871,7 @@ function openEventEditor(agentId, agentName) {
     weekStart: sow,
     events: events.slice(),
     busy: false, error: '', adding: false,
-    addDraft: { action: 'in', date: new Date().toISOString().slice(0,10), time: '08:00', note: '', loc: '' },
+    addDraft: { action: 'in', date: new Date().toISOString().slice(0,10), time: '08:00', note: '' },
   };
   render();
 }
@@ -999,12 +998,12 @@ async function addEvent() {
   const date = document.getElementById('evNewDate').value;
   const time = document.getElementById('evNewTime').value;
   const note = document.getElementById('evNewNote').value;
-  e.addDraft = { action, date, time, note, loc: '' };
+  e.addDraft = { action, date, time, note };
   if (!date || !time) { e.error = 'Pick a valid date and time'; render(); return; }
   const ts = new Date(date + 'T' + time + ':00').toISOString();
   try {
     await api('event_add', { admin_pin: state.admin.pin, agent_id: e.agentId, ts, dir: action, note });
-    e.events.push({ ts, id: e.agentId, name: e.agentName, action, note, loc: '', duration_hrs: null });
+    e.events.push({ ts, id: e.agentId, name: e.agentName, action, note, duration_hrs: null });
     e.events.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
     e.adding = false; e.error = '';
     showToast('Added');
@@ -1311,8 +1310,8 @@ function exportCurrent() {
 }
 function exportTeamCSV() {
   const team = state.data.team || [];
-  const rows = [['Name','Role','Status','Clock-in','Location','Note','Hours today']];
-  team.forEach(t => rows.push([t.name, t.role || '', statusLabel(t.status), t.cin || '', t.loc || '', t.note || '', fmtHM(t.todayHrs || 0)]));
+  const rows = [['Name','Role','Status','Clock-in','Note','Hours today']];
+  team.forEach(t => rows.push([t.name, t.role || '', statusLabel(t.status), t.cin || '', t.note || '', fmtHM(t.todayHrs || 0)]));
   downloadCSV(`team-${new Date().toISOString().slice(0,10)}.csv`, rows);
 }
 function exportTimesheetsCSV() {

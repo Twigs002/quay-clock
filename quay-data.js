@@ -78,18 +78,18 @@ function publicAgent(s) {
 // Compute "last status" client-side. Pulls the most recent event for an agent.
 async function lastStatusFor(staffId) {
   const { data, error } = await sb.from('events')
-    .select('ts, dir, note, location')
+    .select('ts, dir, note')
     .eq('staff_id', staffId)
     .order('ts', { ascending: false })
     .limit(2);
   if (error) throw error;
-  let lastIn = '', lastOut = '', lastNote = '', lastLoc = '';
+  let lastIn = '', lastOut = '', lastNote = '';
   (data || []).forEach((e) => {
-    if (e.dir === 'in'  && !lastIn)  { lastIn = e.ts;  lastNote = e.note || ''; lastLoc = e.location || ''; }
+    if (e.dir === 'in'  && !lastIn)  { lastIn = e.ts;  lastNote = e.note || ''; }
     if (e.dir === 'out' && !lastOut) lastOut = e.ts;
   });
   const status = (lastIn && (!lastOut || new Date(lastIn) > new Date(lastOut))) ? 'in' : 'out';
-  return { status, lastIn, lastOut, lastNote, lastLoc };
+  return { status, lastIn, lastOut, lastNote };
 }
 
 async function sumHoursForAgent(staffId, fromIso, toIso) {
@@ -145,7 +145,7 @@ const handlers = {
       ok: true,
       agent: publicAgent(staff),
       status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
-      lastNote: st.lastNote, lastLoc: st.lastLoc,
+      lastNote: st.lastNote,
       todayHrs, weekHrs, weekTarget: 40,
     };
   },
@@ -154,7 +154,6 @@ const handlers = {
     const id = String(payload.agent_id || '').toLowerCase();
     const dir = String(payload.dir || payload.action || '').toLowerCase();
     const note = String(payload.note || '').trim();
-    const loc  = String(payload.loc  || '').trim();
     if (!id || (dir !== 'in' && dir !== 'out'))
       return { ok: false, error: 'Missing agent_id or direction(in|out)' };
     const st = await lastStatusFor(id);
@@ -169,12 +168,12 @@ const handlers = {
       duration_hrs = +duration_hrs.toFixed(3);
     }
     const { error } = await sb.from('events').insert({
-      staff_id: id, ts: now, dir, note, location: loc, duration_hrs,
+      staff_id: id, ts: now, dir, note, duration_hrs,
     });
     if (error) return { ok: false, error: error.message };
     return {
       ok: true,
-      event: { ts: now, action: dir, note, loc, duration: duration_hrs ? humanDuration(duration_hrs) : '' },
+      event: { ts: now, action: dir, note, duration: duration_hrs ? humanDuration(duration_hrs) : '' },
     };
   },
 
@@ -182,21 +181,19 @@ const handlers = {
     const w = payload.from || startOfWeek(new Date()).toISOString();
     const e = payload.to   || endOfWeek(new Date()).toISOString();
     let q = sb.from('events')
-      .select('id, ts, staff_id, dir, note, location, duration_hrs, staff:staff_id(name)')
+      .select('id, ts, staff_id, dir, note, duration_hrs, staff:staff_id(name)')
       .gte('ts', w).lte('ts', e).order('ts', { ascending: true });
     if (payload.agent_id) q = q.eq('staff_id', String(payload.agent_id).toLowerCase());
     const { data, error } = await q;
     if (error) return { ok: false, error: error.message };
-    // Reshape to mirror the Apps Script `events` payload.
     const events = (data || []).map((r) => ({
       ts: r.ts,
       id: r.staff_id,
       name: r.staff?.name || '',
       action: r.dir,
       note: r.note || '',
-      loc: r.location || '',
       duration_hrs: r.duration_hrs,
-      _event_id: r.id, // expose the row's true UUID for edit/delete
+      _event_id: r.id,
     }));
     return { ok: true, events };
   },
@@ -233,7 +230,7 @@ const handlers = {
         hourly_rate:  s.hourly_rate  != null ? Number(s.hourly_rate)  : null,
         weekly_hours: s.weekly_hours != null ? Number(s.weekly_hours) : null,
         status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
-        lastNote: st.lastNote, lastLoc: st.lastLoc,
+        lastNote: st.lastNote,
       };
     }));
     roster.sort((a, b) => {
@@ -265,7 +262,6 @@ const handlers = {
         id: a.id, name: a.name, role: a.role, team: a.team,
         status: a.status,
         cin: a.status === 'in' ? fmtClockTime(a.lastIn) : '',
-        loc: a.lastLoc || '',
         note: a.status === 'in' ? a.lastNote : '',
         todayHrs: +((hrsBy[a.id] || 0) + liveBonus).toFixed(3),
       };
@@ -420,7 +416,6 @@ const handlers = {
       ts: payload.ts,
       dir,
       note: payload.note || '',
-      location: payload.loc || '',
       duration_hrs: payload.duration_hrs == null || payload.duration_hrs === '' ? null : Number(payload.duration_hrs),
     });
     if (error) return { ok: false, error: error.message };
@@ -439,7 +434,6 @@ const handlers = {
       patch.dir = d;
     }
     if (payload.note != null) patch.note = String(payload.note);
-    if (payload.loc != null)  patch.location = String(payload.loc);
     if (payload.duration_hrs != null && payload.duration_hrs !== '')
       patch.duration_hrs = Number(payload.duration_hrs);
 
