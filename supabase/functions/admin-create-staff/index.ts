@@ -39,18 +39,18 @@ Deno.serve(async (req) => {
   const callerJwt       = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
   if (!callerJwt) return json({ ok: false, error: "Missing auth header" }, 401);
 
-  // 1. Verify caller is admin (use a client scoped to the caller's JWT).
+  // 1. Verify caller is a SUPERUSER (only supers can create staff).
   const callerClient = createClient(supabaseUrl, serviceRoleKey, {
     global: { headers: { Authorization: `Bearer ${callerJwt}` } },
     auth: { persistSession: false },
   });
   const { data: callerStaff, error: callerErr } = await callerClient
     .from("staff")
-    .select("id, is_admin")
+    .select("id, is_admin, is_super")
     .eq("auth_user_id", (await callerClient.auth.getUser()).data.user?.id ?? "")
     .single();
-  if (callerErr || !callerStaff?.is_admin) {
-    return json({ ok: false, error: "Admin access required" }, 403);
+  if (callerErr || !callerStaff?.is_super) {
+    return json({ ok: false, error: "Superuser access required to add staff" }, 403);
   }
 
   // 2. Read + validate body.
