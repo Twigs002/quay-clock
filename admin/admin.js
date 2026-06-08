@@ -119,33 +119,51 @@ function startOfWeek(d) {
 function endOfWeek(d) { const s = startOfWeek(d); const e = new Date(s); e.setDate(e.getDate() + 6); e.setHours(23,59,59,999); return e; }
 
 const PERIOD_LABELS = {
-  'this-week':  'This Week',
-  'last-week':  'Last Week',
-  'this-month': 'This Month',
-  'last-month': 'Last Month',
+  'this-week':   'This Week',
+  'last-week':   'Last Week',
+  'this-cycle':  'This Cycle',  // 21st of last month → 20th of this month
+  'last-cycle':  'Last Cycle',  // the pay cycle before that
+  'custom':      'Custom',
 };
-function periodRange(p) {
+// Pay cycle = 21st of month M → 20th of month M+1 inclusive.
+// "This cycle" is whichever cycle includes today.
+function payCycleFor(d) {
+  const x = new Date(d);
+  const y = x.getFullYear(), m = x.getMonth(), day = x.getDate();
+  // If today is on or after the 21st, current cycle starts THIS month's 21st.
+  // Otherwise it started LAST month's 21st.
+  const startMonth = day >= 21 ? m : m - 1;
+  const from = new Date(y, startMonth, 21, 0,0,0);
+  const to   = new Date(y, startMonth + 1, 20, 23,59,59);
+  return { from, to, kind: 'month' };
+}
+function periodRange(p, customFrom, customTo) {
   const now = new Date();
   if (p === 'last-week') {
     const lw = new Date(now); lw.setDate(lw.getDate() - 7);
     return { from: startOfWeek(lw), to: endOfWeek(lw), kind: 'week' };
   }
-  if (p === 'this-month') {
-    return { from: new Date(now.getFullYear(), now.getMonth(), 1, 0,0,0),
-             to:   new Date(now.getFullYear(), now.getMonth() + 1, 0, 23,59,59),
-             kind: 'month' };
+  if (p === 'this-cycle') return payCycleFor(now);
+  if (p === 'last-cycle') {
+    const cur = payCycleFor(now);
+    const before = new Date(cur.from); before.setDate(before.getDate() - 1);
+    return payCycleFor(before);
   }
-  if (p === 'last-month') {
-    return { from: new Date(now.getFullYear(), now.getMonth() - 1, 1, 0,0,0),
-             to:   new Date(now.getFullYear(), now.getMonth(), 0, 23,59,59),
-             kind: 'month' };
+  if (p === 'custom' && customFrom && customTo) {
+    return {
+      from: new Date(customFrom + 'T00:00:00'),
+      to:   new Date(customTo   + 'T23:59:59'),
+      kind: 'month',
+    };
   }
   return { from: startOfWeek(now), to: endOfWeek(now), kind: 'week' };
 }
-function periodLabel(p) {
-  const r = periodRange(p);
+function periodLabel(p, range) {
+  const r = range || periodRange(p, state.tsCustomFrom, state.tsCustomTo);
   if (r.kind === 'week') return weekLabel(r.from);
-  return r.from.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  // For cycle / custom ranges, show "21 Apr – 20 May 2026".
+  const f = (d) => d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+  return `${f(r.from)} – ${f(r.to)} ${r.to.getFullYear()}`;
 }
 function escapeHtml(s) {
   return String(s == null ? '' : s)
@@ -230,11 +248,16 @@ async function loadAll() {
 
 async function loadTsEvents(period) {
   state.tsPeriod = period;
+  // Custom range only loads when explicitly applied — wait for Apply click.
+  if (period === 'custom' && (!state.tsCustomFrom || !state.tsCustomTo)) {
+    state.data.tsEvents = [];
+    render(); return;
+  }
   if (period === 'this-week' && state.data.weekEvents) {
     state.data.tsEvents = state.data.weekEvents;
     render(); return;
   }
-  const r = periodRange(period);
+  const r = periodRange(period, state.tsCustomFrom, state.tsCustomTo);
   state.loading = true; render();
   try {
     const data = await api('events', { from: r.from.toISOString(), to: r.to.toISOString() });
@@ -564,14 +587,25 @@ function isToday(start, end) {
 // ───── TIMESHEETS ────────────────────────────────────────────────────
 function renderTimesheets() {
   const period = state.tsPeriod || 'this-week';
-  const range = periodRange(period);
+  const range = periodRange(period, state.tsCustomFrom, state.tsCustomTo);
   const events = state.data.tsEvents || [];
   const roster = state.data.roster || [];
   const isMonth = range.kind === 'month';
 
-  const periodChips = ['this-week','last-week','this-month','last-month']
+  const periodChips = ['this-week','last-week','this-cycle','last-cycle','custom']
     .map(p => `<button class="seg-btn ${p === period ? 'on' : ''}" data-ts-period="${p}">${PERIOD_LABELS[p]}</button>`)
     .join('');
+  const customInputs = period === 'custom' ? `
+    <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+      <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase">From</label>
+      <input id="tsCustomFrom" type="date" value="${state.tsCustomFrom || range.from.toISOString().slice(0,10)}"
+             style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-family:Montserrat;font-size:13px">
+      <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase">To</label>
+      <input id="tsCustomTo" type="date" value="${state.tsCustomTo || range.to.toISOString().slice(0,10)}"
+             style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-family:Montserrat;font-size:13px">
+      <button class="btn small primary" id="tsCustomApply">Apply</button>
+    </div>
+  ` : '';
 
   // Aggregate by agent → choose column layout based on weekly vs monthly.
   const cols = isMonth ? monthlyBuckets(range) : weeklyBuckets();
@@ -595,9 +629,12 @@ function renderTimesheets() {
 
   return `<div class="card" style="overflow:hidden">
     <div class="card-head" style="flex-wrap:wrap;gap:10px">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <h3>${escapeHtml(periodLabel(period))}</h3>
-        <div class="seg-pills" role="tablist">${periodChips}</div>
+      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;flex-direction:column">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <h3>${escapeHtml(periodLabel(period, range))}</h3>
+          <div class="seg-pills" role="tablist">${periodChips}</div>
+        </div>
+        ${customInputs}
       </div>
       <button class="btn small" id="tsCsv">${icon('download', 15)} Export CSV</button>
     </div>
@@ -678,6 +715,13 @@ function wireTimesheets() {
   if (csv) csv.addEventListener('click', exportTimesheetsCSV);
   document.querySelectorAll('button[data-ts-period]').forEach(b =>
     b.addEventListener('click', () => loadTsEvents(b.dataset.tsPeriod)));
+  // Custom range inputs — when on the "Custom" tab.
+  const cf = document.getElementById('tsCustomFrom');
+  const ct = document.getElementById('tsCustomTo');
+  const ca = document.getElementById('tsCustomApply');
+  if (cf) cf.addEventListener('input', e => { state.tsCustomFrom = e.target.value; });
+  if (ct) ct.addEventListener('input', e => { state.tsCustomTo   = e.target.value; });
+  if (ca) ca.addEventListener('click', () => loadTsEvents('custom'));
   document.querySelectorAll('button[data-edit-events]').forEach(b => b.addEventListener('click', () => {
     openEventEditor(b.dataset.editEvents, b.dataset.name);
   }));
@@ -1390,7 +1434,7 @@ function renderPayroll() {
     <div class="card pad" style="margin-bottom:18px">
       <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px">
         <div>
-          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Pay period start</label>
+          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px" title="Pay cycle = 21st of month → 20th of next month">Pay period start</label>
           <input id="payFrom" type="date" value="${p.from}" style="margin-top:4px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font-family:Montserrat;font-size:14px">
         </div>
         <div>
@@ -1402,8 +1446,8 @@ function renderPayroll() {
         <div class="seg-pills" style="margin-left:auto">
           <button class="seg-btn" data-pay-preset="this-week">This Week</button>
           <button class="seg-btn" data-pay-preset="last-week">Last Week</button>
-          <button class="seg-btn" data-pay-preset="this-month">This Month</button>
-          <button class="seg-btn" data-pay-preset="last-month">Last Month</button>
+          <button class="seg-btn" data-pay-preset="this-cycle">This Cycle</button>
+          <button class="seg-btn" data-pay-preset="last-cycle">Last Cycle</button>
         </div>
       </div>
     </div>
