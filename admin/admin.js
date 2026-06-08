@@ -860,6 +860,8 @@ function wireTimesheets() {
   if (csv) csv.addEventListener('click', exportTimesheetsCSV);
   document.querySelectorAll('button[data-ts-period]').forEach(b =>
     b.addEventListener('click', () => loadTsEvents(b.dataset.tsPeriod)));
+  document.querySelectorAll('button[data-ts-layout]').forEach(b =>
+    b.addEventListener('click', () => { state.tsLayout = b.dataset.tsLayout; render(); }));
   // Custom range inputs — when on the "Custom" tab.
   const cf = document.getElementById('tsCustomFrom');
   const ct = document.getElementById('tsCustomTo');
@@ -1504,9 +1506,13 @@ function exportTeamCSV() {
   downloadCSV(`team-${new Date().toISOString().slice(0,10)}.csv`, rows);
 }
 function exportTimesheetsCSV() {
-  // Exports the current Timesheets view (period-aware: week or month).
+  // List layout → Connecteam-compatible per-shift CSV (location columns omitted
+  // per project decision). Grid layout → the per-day matrix below.
   const period = state.tsPeriod || 'this-week';
-  const range = periodRange(period);
+  const range = periodRange(period, state.tsCustomFrom, state.tsCustomTo);
+  if ((state.tsLayout || 'grid') === 'list') {
+    return exportTimesheetsListCSV(range, period);
+  }
   const events = state.data.tsEvents || [];
   const roster = state.data.roster || [];
   const cols = range.kind === 'month' ? monthlyBuckets(range) : weeklyBuckets();
@@ -1535,6 +1541,43 @@ function exportTimesheetsCSV() {
     : range.from.toISOString().slice(0, 10);
   downloadCSV(`timesheets-${period}-${tag}.csv`, rows);
 }
+
+// Connecteam-format export — one row per shift, daily/weekly totals stamped
+// on the LAST shift of each day/week (blank otherwise), matching the
+// "May timesheets - May 2026 Connecteams.csv" layout minus location columns.
+function exportTimesheetsListCSV(range, period) {
+  const rows = buildShiftRows(range);
+  const header = [
+    'First name', 'Last name', 'Type', 'Sub-job',
+    'Start Date', 'In', 'End Date', 'Out',
+    'Employee notes', 'Manager notes',
+    'Shift hours', 'Daily total hours', 'Weekly total hours',
+  ];
+  const splitName = (full) => {
+    const parts = String(full || '').trim().split(/\s+/);
+    return [parts[0] || '', parts.slice(1).join(' ')];
+  };
+  const isoDate = (d) => d ? d.toISOString().slice(0, 10) : '';
+  const out = [header];
+  rows.forEach(s => {
+    const [first, last] = splitName(s.agentName);
+    out.push([
+      first, last,
+      'Shift', s.role || '',
+      isoDate(s.inDate || s.outDate),
+      s.inDate ? fmtTimeOf(s.inDate) : '',
+      isoDate(s.outDate || s.inDate),
+      s.outDate ? fmtTimeOf(s.outDate) : '',
+      s.note || '', s.mgrNote || '',
+      fmtHM(s.hrs),
+      s.dailyTotal  != null ? fmtHM(s.dailyTotal)  : '',
+      s.weeklyTotal != null ? fmtHM(s.weeklyTotal) : '',
+    ]);
+  });
+  const tag = range.from.toISOString().slice(0, 10) + '_to_' + range.to.toISOString().slice(0, 10);
+  downloadCSV(`timesheets-connecteam-${period}-${tag}.csv`, out);
+}
+
 function exportLeaveCSV() {
   const leave = state.data.leave || [];
   const rows = [['ID', 'Submitted', 'Employee', 'Type', 'Start', 'End', 'Days', 'Status', 'Decided by', 'Reason']];

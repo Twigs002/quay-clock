@@ -396,6 +396,28 @@ td.dim { opacity: 0.55; }
 /* The View/Edit buttons column doesn't need to be sticky — it's at the
    far right past the Total. Scrolling to it is expected. */
 
+/* timesheets — flat shift list (Connecteam-style) */
+.ts-list-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+.ts-list-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 720px; }
+.ts-list-table th, .ts-list-table td {
+  padding: 10px 12px; font-size: 13px;
+  border-bottom: 1px solid var(--line); text-align: left;
+  white-space: nowrap;
+}
+.ts-list-table th {
+  background: var(--paper);
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.4px;
+  border-bottom: 1px solid var(--line);
+}
+.ts-list-table th.ctr, .ts-list-table td.ctr { text-align: center; }
+.ts-list-table th.r,   .ts-list-table td.r   { text-align: right; }
+.ts-list-table tbody tr:hover { background: rgba(232, 236, 244, 0.35); }
+.ts-list-table .nm { display: flex; align-items: center; gap: 8px; }
+.ts-list-table .av { display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; border-radius: 999px; }
+.ts-list-table .who .n { font-weight: 700; color: var(--ink); }
+.ts-list-empty { padding: 36px 18px; text-align: center; font-size: 13px; }
+
 /* timesheets — period selector pills */
 .seg-pills {
   display: inline-flex; gap: 4px; padding: 3px;
