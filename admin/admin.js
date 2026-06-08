@@ -35,6 +35,7 @@ const state = {
     tsEvents: null,      // events for the selected timesheet period
   },
   tsPeriod: 'this-week', // this-week | last-week | this-month | last-month
+  tsLayout: 'grid',      // grid (per-day matrix) | list (flat Connecteam-style shifts)
   tsDetail: null,        // { agentId, agentName } when detail modal open
   payroll: null,         // { from, to, events: [...] } once fetched
 };
@@ -588,12 +589,13 @@ function isToday(start, end) {
 function renderTimesheets() {
   const period = state.tsPeriod || 'this-week';
   const range = periodRange(period, state.tsCustomFrom, state.tsCustomTo);
-  const events = state.data.tsEvents || [];
-  const roster = state.data.roster || [];
-  const isMonth = range.kind === 'month';
+  const layout = state.tsLayout || 'grid';
 
   const periodChips = ['this-week','last-week','this-cycle','last-cycle','custom']
     .map(p => `<button class="seg-btn ${p === period ? 'on' : ''}" data-ts-period="${p}">${PERIOD_LABELS[p]}</button>`)
+    .join('');
+  const layoutChips = ['grid','list']
+    .map(l => `<button class="seg-btn ${l === layout ? 'on' : ''}" data-ts-layout="${l}">${l === 'grid' ? 'Grid' : 'List'}</button>`)
     .join('');
   const customInputs = period === 'custom' ? `
     <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
@@ -607,7 +609,35 @@ function renderTimesheets() {
     </div>
   ` : '';
 
-  // Aggregate by agent → choose column layout based on weekly vs monthly.
+  const header = `<div class="card-head" style="flex-wrap:wrap;gap:10px">
+    <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h3>${escapeHtml(periodLabel(period, range))}</h3>
+        <div class="seg-pills" role="tablist">${periodChips}</div>
+        <div class="seg-pills" role="tablist" style="margin-left:4px">${layoutChips}</div>
+      </div>
+      ${customInputs}
+    </div>
+    <button class="btn small" id="tsCsv">${icon('download', 15)} Export ${layout === 'list' ? 'Connecteam CSV' : 'CSV'}</button>
+  </div>`;
+
+  const body = layout === 'list'
+    ? renderTimesheetsList(range)
+    : renderTimesheetsGrid(range);
+
+  return `<div class="card" style="overflow:hidden">
+    ${header}
+    ${body}
+    ${state.eventEditor ? renderEventEditor() : ''}
+    ${state.tsDetail ? renderTsDetail() : ''}
+  </div>`;
+}
+
+function renderTimesheetsGrid(range) {
+  const period = state.tsPeriod || 'this-week';
+  const events = state.data.tsEvents || [];
+  const roster = state.data.roster || [];
+  const isMonth = range.kind === 'month';
   const cols = isMonth ? monthlyBuckets(range) : weeklyBuckets();
   const grid = {};
   roster.forEach(a => { grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0), total: 0, days: {} }; });
@@ -627,52 +657,167 @@ function renderTimesheets() {
     .filter(([, v]) => v.total > 0 || roster.some(a => a.name === v.name))
     .sort((a, b) => b[1].total - a[1].total);
 
-  return `<div class="card" style="overflow:hidden">
-    <div class="card-head" style="flex-wrap:wrap;gap:10px">
-      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;flex-direction:column">
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <h3>${escapeHtml(periodLabel(period, range))}</h3>
-          <div class="seg-pills" role="tablist">${periodChips}</div>
-        </div>
-        ${customInputs}
-      </div>
-      <button class="btn small" id="tsCsv">${icon('download', 15)} Export CSV</button>
-    </div>
-    <div class="ts-table-wrap ${isMonth ? 'ts-table-wrap--month' : ''}">
-      <table class="ts-table ${isMonth ? 'ts-table--month' : ''}">
-        <thead><tr>
-          <th class="ts-emp-col">Employee</th>
-          ${cols.map(c => {
-            const parts = c.label.split(' '); // "Mon 3" → ["Mon", "3"] or "Mon" for weekly
-            const isPair = parts.length === 2;
-            return `<th class="ctr ${c.weekend ? 'ts-weekend' : ''}">${
-              isPair ? `<span class="ts-day-name">${escapeHtml(parts[0])}</span><span class="ts-day-num">${escapeHtml(parts[1])}</span>` : escapeHtml(c.label)
-            }</th>`;
-          }).join('')}
-          <th class="ctr ts-total-col">Total</th>
-          <th class="r ts-act-col">View</th>
-        </tr></thead>
-        <tbody>
-          ${rows.length === 0 ? `<tr><td colspan="${cols.length + 3}" class="muted" style="text-align:center;padding:30px">No clock-in data for ${escapeHtml(PERIOD_LABELS[period].toLowerCase())} yet.</td></tr>` : ''}
-          ${rows.map(([id, v], i) => `<tr data-search="${escapeHtml(((v.name||'') + ' ' + (v.role||'') + ' ' + id).toLowerCase())}">
-            <td class="ts-emp-col">
+  return `<div class="ts-table-wrap ${isMonth ? 'ts-table-wrap--month' : ''}">
+    <table class="ts-table ${isMonth ? 'ts-table--month' : ''}">
+      <thead><tr>
+        <th class="ts-emp-col">Employee</th>
+        ${cols.map(c => {
+          const parts = c.label.split(' '); // "Mon 3" → ["Mon", "3"] or "Mon" for weekly
+          const isPair = parts.length === 2;
+          return `<th class="ctr ${c.weekend ? 'ts-weekend' : ''}">${
+            isPair ? `<span class="ts-day-name">${escapeHtml(parts[0])}</span><span class="ts-day-num">${escapeHtml(parts[1])}</span>` : escapeHtml(c.label)
+          }</th>`;
+        }).join('')}
+        <th class="ctr ts-total-col">Total</th>
+        <th class="r ts-act-col">View</th>
+      </tr></thead>
+      <tbody>
+        ${rows.length === 0 ? `<tr><td colspan="${cols.length + 3}" class="muted" style="text-align:center;padding:30px">No clock-in data for ${escapeHtml(PERIOD_LABELS[period].toLowerCase())} yet.</td></tr>` : ''}
+        ${rows.map(([id, v], i) => `<tr data-search="${escapeHtml(((v.name||'') + ' ' + (v.role||'') + ' ' + id).toLowerCase())}">
+          <td class="ts-emp-col">
+            <div class="nm">
+              <div class="av" style="background:${avColor(i)};width:32px;height:32px;font-size:12px">${initials(v.name)}</div>
+              <div class="who"><div class="n">${escapeHtml(v.name)}</div><div class="r">${escapeHtml(v.role || '')}</div></div>
+            </div>
+          </td>
+          ${v.vals.map((h, ci) => `<td class="ctr tnum ${cols[ci].weekend ? 'ts-weekend' : ''}" style="${h ? '' : 'color:var(--muted)'}">${fmtHM(h)}</td>`).join('')}
+          <td class="ctr tnum ts-total-col" style="color:var(--blue);font-weight:800">${fmtHM(v.total)}</td>
+          <td class="r ts-act-col">
+            <button class="btn small" data-detail-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}">View</button>
+            <button class="btn small" data-edit-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}" style="margin-left:6px">Edit</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ── Flat shift list (Connecteam-style) ───────────────────────────────
+// Pairs IN→OUT events into shifts; computes daily + weekly totals so the
+// table reads exactly like Connecteam's weekly-timesheet view. Used by
+// both the on-screen list and the matching CSV export below.
+function buildShiftRows(range) {
+  const events = (state.data.tsEvents || [])
+    .filter(e => {
+      const t = new Date(e.ts).getTime();
+      return t >= range.from && t <= range.to;
+    })
+    .slice()
+    .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  const roster = state.data.roster || [];
+  const rosterById = Object.fromEntries(roster.map(r => [r.id, r]));
+
+  // Pair IN with the next OUT for the same staffer.
+  const openIns = {};
+  const shifts = [];
+  events.forEach(e => {
+    if (e.action === 'in') { openIns[e.id] = e; return; }
+    if (e.action === 'out') {
+      const inE = openIns[e.id] || null;
+      const inDate = inE ? new Date(inE.ts) : null;
+      const outDate = new Date(e.ts);
+      const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
+        ? Number(e.duration_hrs)
+        : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+      shifts.push({
+        agentId: e.id,
+        agentName: e.name || (rosterById[e.id] && rosterById[e.id].name) || e.id,
+        role: rosterById[e.id] ? (rosterById[e.id].role || '') : '',
+        inDate, outDate, hrs,
+        note: inE ? (inE.note || '') : (e.note || ''),
+        mgrNote: '',
+      });
+      delete openIns[e.id];
+    }
+  });
+
+  // Group: agent → day → shifts; compute daily + weekly totals.
+  const byAgent = new Map();
+  shifts.forEach(s => {
+    const baseDate = s.inDate || s.outDate;
+    const dayKey = baseDate.toISOString().slice(0, 10);
+    const wkKey  = startOfWeek(baseDate).toISOString().slice(0, 10);
+    if (!byAgent.has(s.agentId)) byAgent.set(s.agentId, {
+      agentId: s.agentId, agentName: s.agentName, role: s.role,
+      days: new Map(), weeks: new Map(), shifts: [],
+    });
+    const a = byAgent.get(s.agentId);
+    a.shifts.push({ ...s, dayKey, wkKey });
+    a.days.set(dayKey, (a.days.get(dayKey) || 0) + s.hrs);
+    a.weeks.set(wkKey, (a.weeks.get(wkKey) || 0) + s.hrs);
+  });
+
+  // Sort by name; each agent's shifts newest-first; flatten into rows so we
+  // can stamp daily/weekly totals on the LAST row of each day/week (Connecteam).
+  const rows = [];
+  [...byAgent.values()]
+    .sort((a, b) => a.agentName.localeCompare(b.agentName))
+    .forEach(a => {
+      const list = a.shifts.slice().sort((x, y) => (y.inDate || y.outDate) - (x.inDate || x.outDate));
+      let lastDay = null, lastWeek = null;
+      list.forEach(s => {
+        const isLastForDay  = lastDay  !== s.dayKey;
+        const isLastForWeek = lastWeek !== s.wkKey;
+        rows.push({
+          ...s,
+          role: a.role,
+          dailyTotal:  isLastForDay  ? a.days.get(s.dayKey)  : null,
+          weeklyTotal: isLastForWeek ? a.weeks.get(s.wkKey) : null,
+        });
+        lastDay  = s.dayKey;
+        lastWeek = s.wkKey;
+      });
+    });
+  return rows;
+}
+
+function renderTimesheetsList(range) {
+  const rows = buildShiftRows(range);
+  if (rows.length === 0) {
+    return `<div class="ts-list-empty muted">No shifts in this period.</div>`;
+  }
+  const cell = (v, cls = '') =>
+    `<td class="${cls}">${v == null || v === '' ? '<span class="muted">—</span>' : v}</td>`;
+  return `<div class="ts-list-wrap">
+    <table class="ts-list-table">
+      <thead><tr>
+        <th>Employee</th>
+        <th>Role</th>
+        <th>Date</th>
+        <th class="ctr">In</th>
+        <th class="ctr">Out</th>
+        <th class="ctr">Shift</th>
+        <th class="ctr">Daily</th>
+        <th class="ctr">Weekly</th>
+        <th>Notes</th>
+        <th class="r"></th>
+      </tr></thead>
+      <tbody>
+        ${rows.map((s, i) => {
+          const d = s.inDate || s.outDate;
+          const dateLbl = d ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—';
+          return `<tr>
+            <td>
               <div class="nm">
-                <div class="av" style="background:${avColor(i)};width:32px;height:32px;font-size:12px">${initials(v.name)}</div>
-                <div class="who"><div class="n">${escapeHtml(v.name)}</div><div class="r">${escapeHtml(v.role || '')}</div></div>
+                <div class="av" style="background:${avColor(i)};width:28px;height:28px;font-size:11px">${initials(s.agentName)}</div>
+                <div class="who"><div class="n">${escapeHtml(s.agentName)}</div></div>
               </div>
             </td>
-            ${v.vals.map((h, ci) => `<td class="ctr tnum ${cols[ci].weekend ? 'ts-weekend' : ''}" style="${h ? '' : 'color:var(--muted)'}">${fmtHM(h)}</td>`).join('')}
-            <td class="ctr tnum ts-total-col" style="color:var(--blue);font-weight:800">${fmtHM(v.total)}</td>
-            <td class="r ts-act-col">
-              <button class="btn small" data-detail-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}">View</button>
-              <button class="btn small" data-edit-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}" style="margin-left:6px">Edit</button>
+            ${cell(escapeHtml(s.role || ''))}
+            ${cell(escapeHtml(dateLbl))}
+            <td class="ctr tnum">${s.inDate ? fmtTimeOf(s.inDate) : '<span class="muted">—</span>'}</td>
+            <td class="ctr tnum">${s.outDate ? fmtTimeOf(s.outDate) : '<span class="muted">—</span>'}</td>
+            <td class="ctr tnum" style="font-weight:700">${fmtHM(s.hrs)}</td>
+            <td class="ctr tnum" style="${s.dailyTotal == null ? 'color:var(--muted)' : 'color:var(--ink);font-weight:700'}">${s.dailyTotal != null ? fmtHM(s.dailyTotal) : ''}</td>
+            <td class="ctr tnum" style="${s.weeklyTotal == null ? 'color:var(--muted)' : 'color:var(--blue);font-weight:800'}">${s.weeklyTotal != null ? fmtHM(s.weeklyTotal) : ''}</td>
+            ${cell(escapeHtml(s.note || ''))}
+            <td class="r">
+              <button class="btn small" data-detail-events="${escapeHtml(s.agentId)}" data-name="${escapeHtml(s.agentName)}">View</button>
             </td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
-    ${state.eventEditor ? renderEventEditor() : ''}
-    ${state.tsDetail ? renderTsDetail() : ''}
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
   </div>`;
 }
 
