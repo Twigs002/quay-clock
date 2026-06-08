@@ -1107,7 +1107,9 @@ function renderTeam() {
           <div class="top">
             <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px">${initials(s.name)}</div>
             <div style="min-width:0;flex:1">
-              <div class="name">${escapeHtml(s.name)}${s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : ''}</div>
+              <div class="name">${escapeHtml(s.name)}${s.super
+                ? ' <span style="font-size:10px;background:var(--blue);color:#fff;padding:2px 6px;border-radius:6px;vertical-align:middle">SUPER</span>'
+                : (s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : '')}</div>
               <div class="role">${escapeHtml(s.role || '')}</div>
             </div>
             <button class="btn small" data-edit-staff="${escapeHtml(s.id)}">Edit</button>
@@ -1128,7 +1130,7 @@ function wireTeam() {
   const btn = document.getElementById('addStaffBtn');
   if (btn) btn.addEventListener('click', () => {
     state.staffModal = { mode: 'add', name: '', id: '', role: '', team: '', pin: '',
-                        admin: false, hourly_rate: '', weekly_hours: '',
+                        admin: false, super: false, hourly_rate: '', weekly_hours: '',
                         error: '', busy: false };
     render();
   });
@@ -1139,7 +1141,7 @@ function wireTeam() {
     state.staffModal = {
       mode: 'edit',
       id: s.id, name: s.name, role: s.role || '', team: s.team || '',
-      pin: '', admin: !!s.admin,
+      pin: '', admin: !!s.admin, super: !!s.super,
       hourly_rate: s.hourly_rate != null ? String(s.hourly_rate) : '',
       weekly_hours: s.weekly_hours != null ? String(s.weekly_hours) : '',
       active: true, error: '', busy: false,
@@ -1199,7 +1201,11 @@ function renderStaffModal() {
         `}
         <label class="check">
           <input id="sfAdmin" type="checkbox" ${f.admin ? 'checked' : ''}>
-          <span>Admin — can open this dashboard</span>
+          <span>Admin — can open the manager dashboard</span>
+        </label>
+        <label class="check">
+          <input id="sfSuper" type="checkbox" ${f.super ? 'checked' : ''}>
+          <span>Superuser — can also see the Leadership tab</span>
         </label>
         ${err ? `<div class="banner">${escapeHtml(err)}</div>` : ''}
       </div>
@@ -1226,6 +1232,7 @@ function wireStaffModal() {
   const hours = document.getElementById('sfHours');
   const pin   = document.getElementById('sfPin');
   const adm   = document.getElementById('sfAdmin');
+  const sup   = document.getElementById('sfSuper');
 
   // Auto-slug the username from name (add mode only) until user touches id.
   let idTouched = !!f.id;
@@ -1243,6 +1250,7 @@ function wireStaffModal() {
   hours.addEventListener('input', () => { f.weekly_hours = hours.value; });
   if (pin) pin.addEventListener('input', () => { f.pin = pin.value.replace(/[^0-9]/g, '').slice(0, 4); pin.value = f.pin; });
   adm.addEventListener('change', () => { f.admin = adm.checked; });
+  if (sup) sup.addEventListener('change', () => { f.super = sup.checked; });
 
   document.getElementById('staffSave').addEventListener('click', submitStaffModal);
 }
@@ -1265,6 +1273,7 @@ async function submitStaffModal() {
         team: f.team.trim(),
         pin: f.pin,
         admin: !!f.admin,
+        super: !!f.super,
         hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
         weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
       });
@@ -1275,6 +1284,7 @@ async function submitStaffModal() {
         role: f.role.trim(),
         team: f.team.trim(),
         admin: !!f.admin,
+        super: !!f.super,
         hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
         weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
       });

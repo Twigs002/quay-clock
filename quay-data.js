@@ -67,7 +67,12 @@ async function loadSelfStaff() {
 function clearSelf() { _selfStaff = null; }
 function publicAgent(s) {
   if (!s) return null;
-  return { id: s.id, name: s.name, role: s.role || '', team: s.team || '', admin: !!s.is_admin };
+  return {
+    id: s.id, name: s.name,
+    role: s.role || '', team: s.team || '',
+    admin: !!s.is_admin,
+    super: !!s.is_super,
+  };
 }
 
 // Compute "last status" client-side. Pulls the most recent event for an agent.
@@ -224,6 +229,7 @@ const handlers = {
       return {
         id: s.id, name: s.name, role: s.role || '', team: s.team || '',
         admin: !!s.is_admin,
+        super: !!s.is_super,
         hourly_rate:  s.hourly_rate  != null ? Number(s.hourly_rate)  : null,
         weekly_hours: s.weekly_hours != null ? Number(s.weekly_hours) : null,
         status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
@@ -365,6 +371,7 @@ const handlers = {
         admin: !!payload.admin, active: payload.active !== false,
         hourly_rate:  payload.hourly_rate ?? null,
         weekly_hours: payload.weekly_hours ?? null,
+        is_super: !!payload.super,
       }),
     });
     const body = await res.json().catch(() => ({}));
@@ -382,6 +389,7 @@ const handlers = {
     if (payload.role != null)         patch.role = String(payload.role);
     if (payload.team != null)         patch.team = String(payload.team);
     if (payload.admin != null)        patch.is_admin = !!payload.admin;
+    if (payload.super != null)        patch.is_super = !!payload.super;
     if (payload.active != null)       patch.active = String(payload.active).toLowerCase() !== 'false';
     if (payload.hourly_rate !== undefined)
       patch.hourly_rate = (payload.hourly_rate === '' || payload.hourly_rate == null) ? null : Number(payload.hourly_rate);

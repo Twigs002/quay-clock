@@ -21,6 +21,7 @@ interface Body {
   active?: boolean;
   hourly_rate?: number | string | null;
   weekly_hours?: number | string | null;
+  is_super?: boolean;
 }
 
 const CORS = {
@@ -93,6 +94,7 @@ Deno.serve(async (req) => {
     role: body.role ?? "",
     team: body.team ?? "",
     is_admin: !!body.admin,
+    is_super: !!body.is_super,
     active: body.active === false ? false : true,
     hourly_rate:  num(body.hourly_rate),
     weekly_hours: num(body.weekly_hours),
