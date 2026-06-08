@@ -1094,12 +1094,15 @@ function wireLeave() {
 // ───── TEAM ──────────────────────────────────────────────────────────
 function renderTeam() {
   const roster = state.data.roster || [];
+  const canAddStaff = !!(state.admin && state.admin.admin === true && state.admin.super !== false && (state.admin.super || state.admin.is_super));
   return `
     <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
-      <button class="btn primary small" id="addStaffBtn">+ Add staff</button>
+      ${state.admin && (state.admin.super || state.admin.is_super)
+        ? `<button class="btn primary small" id="addStaffBtn">+ Add staff</button>`
+        : `<span class="muted" style="font-size:12.5px">Only superusers can add staff.</span>`}
     </div>
     <div class="team-grid">
-      ${roster.length === 0 ? `<div class="empty card" style="grid-column:1/-1">No staff yet — click <b>+ Add staff</b> to add your first.</div>` : ''}
+      ${roster.length === 0 ? `<div class="empty card" style="grid-column:1/-1">No staff yet${state.admin && (state.admin.super || state.admin.is_super) ? ' — click <b>+ Add staff</b> to add your first.' : ' — ask a superuser to add them.'}</div>` : ''}
       ${roster.map((s, i) => {
         const rate = s.hourly_rate != null ? `R${Number(s.hourly_rate).toFixed(2)}/hr` : 'No rate set';
         const hrs = s.weekly_hours != null ? `${Number(s.weekly_hours)}h/week` : 'No target';
