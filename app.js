@@ -11,7 +11,7 @@
 const APPS_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw3g6cdmfIbWC6TVSybVk5CECKhnSBneDuWGzM4krxcTFgOhS7Ef4InD6F1x9llnl27AA/exec';
 const LS_KEY = 'quay_clock_agent_v2';
-const DEFAULT_LOC = 'V&A Waterfront Office';
+// Location was removed from the app on user request — no longer recorded.
 
 // ───── STATE ─────────────────────────────────────────────────────────
 const state = {
@@ -23,7 +23,7 @@ const state = {
   pinBuf: '',
   pinErr: false,
   // tab data caches
-  home: null,            // { status, lastIn, lastNote, lastLoc, todayHrs, weekHrs, weekTarget }
+  home: null,            // { status, lastIn, lastNote, todayHrs, weekHrs, weekTarget }
   timesheet: null,       // { weekBars, entries, totalHrs, target }
   leave: null,           // { balances, requests }
   team: null,            // [ { id, name, role, status, cin, loc, note } ]
@@ -186,7 +186,7 @@ async function loadHome() {
   state.home = {
     status: data.status,
     lastIn: data.lastIn, lastOut: data.lastOut,
-    lastNote: data.lastNote, lastLoc: data.lastLoc,
+    lastNote: data.lastNote,
     todayHrs: data.todayHrs || 0,
     weekHrs: data.weekHrs || 0,
     weekTarget: data.weekTarget || 40,
@@ -241,7 +241,6 @@ function buildTimesheet(events, now) {
       hrs: fmtHM(hrs),
       hrsNum: hrs,
       note: openIn ? (openIn.note || '') : (e.note || ''),
-      loc: openIn ? (openIn.loc || '') : (e.loc || ''),
       live: false,
     });
     openIn = null;
@@ -262,7 +261,6 @@ function buildTimesheet(events, now) {
       hrs: fmtHM(hrs),
       hrsNum: hrs,
       note: openIn.note || '',
-      loc: openIn.loc || '',
       live: true,
     });
   }
@@ -451,11 +449,6 @@ function renderHome() {
             ${on ? `<span class="elapsed tnum">${elapsed}</span>` : ''}
           </button>
         </div>
-        <div class="loc-row">
-          ${icon('pin', 17, 'var(--blue)')}
-          ${escapeHtml(h.lastLoc || DEFAULT_LOC)}
-          <span class="in-range"><span class="dot"></span>In range</span>
-        </div>
         ${on && h.lastNote ? `<div class="note-bubble">
             ${icon('clipboard', 17, 'var(--blue)')}
             <span>${escapeHtml(h.lastNote)}</span>
@@ -521,7 +514,6 @@ async function submitClock(action) {
       // (which is the dispatcher key on the Apps Script side).
       dir: action,
       note: action === 'in' ? note : '',
-      loc: DEFAULT_LOC,
     });
     state.sheet = null;
     showToast(action === 'in' ? 'Clocked in ✓' : 'Clocked out ✓');
