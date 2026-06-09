@@ -233,6 +233,42 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
   animation: qslide .26s cubic-bezier(.2,.8,.2,1);
   max-height: 92vh; overflow-y: auto;
 }
+
+/* End-of-day report sheet (LN / Assistant on clock-out) */
+.sheet-report .sheet-head { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 4px; }
+.sheet-report .sheet-head h3 { margin: 0; font-size: 18px; font-weight: 800; color: var(--ink); }
+.sheet-report .sheet-close { background: none; border: 0; cursor: pointer; padding: 4px; }
+.sheet-report .sheet-sub { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 14px; font-size: 13px; color: var(--ink); }
+.sheet-report .rep-division-row { display: flex; align-items: center; gap: 10px; }
+.sheet-report .rep-division-row .rep-input { flex: 1; }
+.sheet-report .rep-section-head {
+  margin: 14px 0 6px;
+  font-size: 12px; font-weight: 800; letter-spacing: 0.04em;
+  color: var(--blue); text-transform: uppercase;
+}
+.sheet-report .rep-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
+}
+.sheet-report .rep-field { display: flex; flex-direction: column; gap: 4px; }
+.sheet-report .rep-field-wide { grid-column: 1 / -1; }
+.sheet-report .rep-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.sheet-report .rep-input {
+  width: 100%; padding: 9px 11px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: #fff; color: var(--ink);
+  font-family: Montserrat; font-size: 14px;
+  -webkit-appearance: none;
+}
+.sheet-report .rep-input:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+.sheet-report textarea.rep-input { resize: vertical; min-height: 70px; font-family: Montserrat; }
+.sheet-report .sheet-cta { margin-top: 14px; }
+.sheet-report .sheet-go {
+  width: 100%; padding: 14px; border: 0; border-radius: 14px;
+  background: var(--blue); color: #fff;
+  font-family: Montserrat; font-weight: 800; font-size: 14px;
+  letter-spacing: 0.02em; cursor: pointer;
+}
+.sheet-report .sheet-go.disabled { opacity: 0.55; cursor: default; }
 .sheet-grip {
   width: 40px; height: 5px; border-radius: 9px; background: var(--line); margin: 0 auto 16px;
 }

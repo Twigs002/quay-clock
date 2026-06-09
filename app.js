@@ -476,7 +476,14 @@ function wireHome() {
   btn.addEventListener('click', () => {
     if (!state.home) return;
     if (state.home.status === 'in') {
-      submitClock('out');
+      // LN + Assistant must fill the end-of-day report before clocking
+      // out — the form clocks them out itself on submit.
+      const d = String((state.agent && state.agent.designation) || '').toLowerCase();
+      if (d === 'ln' || d === 'assistant') {
+        openClockOutReport();
+      } else {
+        submitClock('out');
+      }
     } else {
       openNoteSheet();
     }
@@ -540,11 +547,164 @@ async function submitClock(action) {
   }
 }
 
+// ───── CLOCK-OUT REPORT SHEET (LN / Assistant) ──────────────────────
+// End-of-day capture form. Submitting writes a clock_out_reports row
+// AND clocks the user out atomically — closing the modal without
+// submitting just leaves them clocked in.
+function openClockOutReport() {
+  state.sheet = {
+    type: 'report',
+    busy: false,
+    error: '',
+    values: {
+      division: (state.agent && state.agent.division) || '',
+      hs_tasks_completed: '', hs_calls_made: '', hs_emails_sent: '',
+      hs_whatsapps_sent: '', hs_answered_contacts: '',
+      hs_leads_vals: '', hs_reconverted_leads: '',
+      df_calls: '', df_email_successes: '', df_leads_vals: '', df_hours: '',
+      wa_sent: '', wa_responses: '', wa_leads_vals: '',
+      notes: '',
+    },
+  };
+  render();
+}
+
+function renderReportSheet() {
+  const v = state.sheet.values;
+  const err = state.sheet.error || '';
+  const busy = state.sheet.busy || false;
+  const num = (key, label, emoji) => `
+    <label class="rep-field">
+      <span class="rep-label">${emoji} ${label}</span>
+      <input class="rep-input tnum" type="number" min="0" inputmode="numeric"
+             data-rep-key="${key}" value="${v[key]}" placeholder="0">
+    </label>`;
+  // Currently divisions are free-text against the staff.division field;
+  // until we wire a config-driven picker we offer the most common
+  // examples + the agent's current value as a datalist.
+  const knownDivisions = ['Engine Room', 'RM', 'Fancy', 'Inbound', 'Outbound'];
+  const divisionOptions = knownDivisions
+    .map(d => `<option value="${escapeHtml(d)}"></option>`).join('');
+  return `<div class="sheet-wrap" id="sheetWrap">
+    <div class="sheet-back" id="sheetBack"></div>
+    <div class="sheet sheet-report" role="dialog">
+      <div class="sheet-grip"></div>
+      <div class="sheet-head">
+        <h3>End-of-day Report</h3>
+        <button class="sheet-close" id="sheetClose">${icon('x', 20, 'var(--muted)')}</button>
+      </div>
+      <div class="sheet-sub">
+        <div>👤 <b>${escapeHtml(state.agent.name)}</b></div>
+        <div class="rep-division-row">
+          <label class="rep-label" for="repDivision">🏷️ Division</label>
+          <input id="repDivision" class="rep-input" list="repDivisionList"
+                 value="${escapeHtml(v.division)}" placeholder="Division">
+          <datalist id="repDivisionList">${divisionOptions}</datalist>
+        </div>
+      </div>
+      <div class="sheet-body" style="overflow-y:auto;max-height:60vh">
+        <div class="rep-section-head">📊 HubSpot Work Summary</div>
+        <div class="rep-grid">
+          ${num('hs_tasks_completed',  'Tasks Completed',     '📋')}
+          ${num('hs_calls_made',       'Calls Made',          '📞')}
+          ${num('hs_emails_sent',      'Emails Sent',         '💻')}
+          ${num('hs_whatsapps_sent',   "WhatsApp's sent",     '📲')}
+          ${num('hs_answered_contacts','Answered Contacts',   '✅')}
+          ${num('hs_leads_vals',       'Leads/Vals',          '🎯')}
+          ${num('hs_reconverted_leads','Reconverted Leads',   '♻️')}
+        </div>
+
+        <div class="rep-section-head">☎️🔥 DialFire Canvassing</div>
+        <div class="rep-grid">
+          ${num('df_calls',            'Calls',               '📞')}
+          ${num('df_email_successes',  'Email Successes',     '📧')}
+          ${num('df_leads_vals',       'Leads/Vals',          '🏡')}
+          ${num('df_hours',            'Hours',               '⏰')}
+        </div>
+
+        <div class="rep-section-head">📲 WhatsApp Campaigns</div>
+        <div class="rep-grid">
+          ${num('wa_sent',             "WhatsApps sent",      '🤳')}
+          ${num('wa_responses',        'Responses',           '▶️')}
+          ${num('wa_leads_vals',       'Leads/Vals',          '🎯')}
+        </div>
+
+        <div class="rep-section-head">🔷📈 Additional Admin / Notes</div>
+        <label class="rep-field rep-field-wide">
+          <textarea id="repNotes" class="rep-input" rows="3"
+                    placeholder="P24 listings, email campaigns, vals, etc.">${escapeHtml(v.notes)}</textarea>
+        </label>
+
+        ${err ? `<div class="banner" id="sheetErr" style="display:block">${escapeHtml(err)}</div>` : ''}
+      </div>
+      <div class="sheet-cta">
+        <button class="sheet-go ok ${busy ? 'disabled' : ''}" id="sheetGo">
+          ${busy ? 'Submitting…' : 'Submit &amp; Clock out'}
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function wireReportSheet() {
+  const close = () => { state.sheet = null; render(); };
+  document.getElementById('sheetBack').addEventListener('click', close);
+  document.getElementById('sheetClose').addEventListener('click', close);
+  // Bind inputs back to state so re-renders preserve typed values.
+  document.querySelectorAll('[data-rep-key]').forEach(el => {
+    el.addEventListener('input', e => {
+      state.sheet.values[el.dataset.repKey] = e.target.value;
+    });
+  });
+  const div = document.getElementById('repDivision');
+  if (div) div.addEventListener('input', e => { state.sheet.values.division = e.target.value; });
+  const nt = document.getElementById('repNotes');
+  if (nt) nt.addEventListener('input', e => { state.sheet.values.notes = e.target.value; });
+  const go = document.getElementById('sheetGo');
+  if (go) go.addEventListener('click', () => submitClockOutReport());
+}
+
+async function submitClockOutReport() {
+  if (!state.sheet || state.sheet.busy) return;
+  // Validate: every numeric must be a non-negative integer (0 OK).
+  const v = state.sheet.values;
+  const numericKeys = [
+    'hs_tasks_completed','hs_calls_made','hs_emails_sent','hs_whatsapps_sent',
+    'hs_answered_contacts','hs_leads_vals','hs_reconverted_leads',
+    'df_calls','df_email_successes','df_leads_vals','df_hours',
+    'wa_sent','wa_responses','wa_leads_vals',
+  ];
+  const missing = numericKeys.filter(k => v[k] === '' || v[k] == null);
+  if (missing.length) {
+    state.sheet.error = 'Every count is required (0 is fine). Missing: ' + missing.length + ' field' + (missing.length === 1 ? '' : 's') + '.';
+    render();
+    return;
+  }
+  if (!v.division.trim()) {
+    state.sheet.error = 'Pick a division before submitting.';
+    render();
+    return;
+  }
+  state.sheet.busy = true; state.sheet.error = ''; render();
+  try {
+    const res = await api('clock_out_report_submit', v);
+    if (!res || res.ok === false) throw new Error(res && res.error || 'Submit failed');
+    // Now actually clock out (re-use the existing path so events log + home reloads).
+    state.sheet = null;
+    await submitClock('out');
+  } catch (e) {
+    state.sheet.busy = false;
+    state.sheet.error = String(e.message || e);
+    render();
+  }
+}
+
 // ───── NOTE SHEET (and LEAVE SHEET) ─────────────────────────────────
 function renderSheet() {
   if (!state.sheet) return '';
   if (state.sheet.type === 'note') return renderNoteSheet();
   if (state.sheet.type === 'request') return renderLeaveSheet();
+  if (state.sheet.type === 'report')  return renderReportSheet();
   return '';
 }
 
@@ -613,6 +773,7 @@ function renderLeaveSheet() {
 function wireSheet() {
   const back = document.getElementById('sheetBack');
   if (back) back.addEventListener('click', () => { state.sheet = null; render(); });
+  if (state.sheet.type === 'report') { wireReportSheet(); return; }
   if (state.sheet.type === 'note') {
     const txt = document.getElementById('sheetTxt');
     const go  = document.getElementById('sheetGo');
