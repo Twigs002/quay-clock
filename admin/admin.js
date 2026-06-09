@@ -1324,6 +1324,7 @@ function wireTeam() {
   if (btn) btn.addEventListener('click', () => {
     state.staffModal = { mode: 'add', name: '', id: '', role: '', team: '', pin: '',
                         admin: false, super: false, hourly_rate: '', weekly_hours: '',
+                        designation: 'fancy', division: '',
                         error: '', busy: false };
     render();
   });
@@ -1337,6 +1338,8 @@ function wireTeam() {
       pin: '', admin: !!s.admin, super: !!s.super,
       hourly_rate: s.hourly_rate != null ? String(s.hourly_rate) : '',
       weekly_hours: s.weekly_hours != null ? String(s.weekly_hours) : '',
+      designation: s.designation || '',
+      division: s.division || '',
       active: true, error: '', busy: false,
     };
     render();
@@ -1385,6 +1388,32 @@ function renderStaffModal() {
           </label>
           <label class="field"><span>Weekly hours</span>
             <input id="sfHours" type="number" step="0.5" min="0" max="80" value="${escapeHtml(f.weekly_hours)}" placeholder="e.g. 40">
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field"><span>Designation</span>
+            <select id="sfDesignation">
+              ${['super_admin','manager','rm','fancy','ln','assistant'].map(d => `
+                <option value="${d}" ${f.designation === d ? 'selected' : ''}>${
+                  d === 'super_admin' ? 'Super Admin' :
+                  d === 'manager'     ? 'Manager' :
+                  d === 'rm'          ? 'RM (Relationship Manager)' :
+                  d === 'fancy'       ? 'Fancy Caller' :
+                  d === 'ln'          ? 'LN (Lead Nurturer)' :
+                  'Assistant'
+                }</option>`).join('')}
+            </select>
+            <div class="hint">LN + Assistant get the end-of-day report form on clock-out.</div>
+          </label>
+          <label class="field"><span>Division</span>
+            <input id="sfDivision" type="text" list="sfDivisionList" value="${escapeHtml(f.division || '')}" placeholder="e.g. Engine Room">
+            <datalist id="sfDivisionList">
+              <option value="Engine Room"></option>
+              <option value="RM"></option>
+              <option value="Fancy"></option>
+              <option value="Inbound"></option>
+              <option value="Outbound"></option>
+            </datalist>
           </label>
         </div>
         ${isEdit ? '' : `
@@ -1441,6 +1470,10 @@ function wireStaffModal() {
   team.addEventListener('input',  () => { f.team  = team.value; });
   rate.addEventListener('input',  () => { f.hourly_rate  = rate.value; });
   hours.addEventListener('input', () => { f.weekly_hours = hours.value; });
+  const desig = document.getElementById('sfDesignation');
+  if (desig) desig.addEventListener('change', () => { f.designation = desig.value; });
+  const division = document.getElementById('sfDivision');
+  if (division) division.addEventListener('input', () => { f.division = division.value; });
   if (pin) pin.addEventListener('input', () => { f.pin = pin.value.replace(/[^0-9]/g, '').slice(0, 4); pin.value = f.pin; });
   adm.addEventListener('change', () => { f.admin = adm.checked; });
   if (sup) sup.addEventListener('change', () => { f.super = sup.checked; });
@@ -1469,6 +1502,8 @@ async function submitStaffModal() {
         super: !!f.super,
         hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
         weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
+        designation: f.designation || null,
+        division: f.division || null,
       });
     } else {
       await api('staff_update', {
@@ -1480,6 +1515,8 @@ async function submitStaffModal() {
         super: !!f.super,
         hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
         weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
+        designation: f.designation || null,
+        division: f.division || null,
       });
     }
     state.staffModal = null;

@@ -22,6 +22,8 @@ interface Body {
   hourly_rate?: number | string | null;
   weekly_hours?: number | string | null;
   is_super?: boolean;
+  designation?: string | null;
+  division?: string | null;
 }
 
 const CORS = {
@@ -98,6 +100,8 @@ Deno.serve(async (req) => {
     active: body.active === false ? false : true,
     hourly_rate:  num(body.hourly_rate),
     weekly_hours: num(body.weekly_hours),
+    designation:  body.designation || null,
+    division:     body.division || null,
   });
   if (staffErr) {
     // Best-effort rollback of the auth user so we don't leak orphans.
