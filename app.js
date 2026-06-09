@@ -478,14 +478,15 @@ function wireHome() {
     if (state.home.status === 'in') {
       // LN + Assistant must fill the end-of-day report before clocking
       // out — the form clocks them out itself on submit.
+      // Everyone else picks a campaign from the same list as clock-in.
       const d = String((state.agent && state.agent.designation) || '').toLowerCase();
       if (d === 'ln' || d === 'assistant') {
         openClockOutReport();
       } else {
-        submitClock('out');
+        openNoteSheet('out');
       }
     } else {
-      openNoteSheet();
+      openNoteSheet('in');
     }
   });
 }
@@ -498,8 +499,26 @@ function greetingFor(d) {
 }
 function firstName(n) { return String(n || '').split(/\s+/)[0]; }
 
-function openNoteSheet() {
-  state.sheet = { type: 'note', value: '' };
+// Canonical list of campaigns / things a staff member could be working on
+// when they clock in or out. Edited here, used by the picker sheet.
+const CLOCK_CAMPAIGNS = [
+  'Amigos', 'Assassins', 'Avengers', 'Babes', 'Ballers', 'Bergscape Asb Calling',
+  'Betties', 'Blitz', 'Boets', 'Bulls', 'Cavaliers', 'Chargers', 'City Sunsets',
+  'Clienthub Nelio Assistant', 'Conquerors', 'Dealers', 'Dealmakers', 'Dixies',
+  'Dolphins', 'Donkeys', 'Dragons', 'Dutchmen', 'Falcons', 'Farmers', 'Furys',
+  'Gladiators', 'Goal Diggers', 'Gunslingers', 'Hawks', 'Headbangers', 'Hoekers',
+  'Hooligans', 'Hout Baes', 'Huntsmen', 'Hustlers', 'Invincibles', 'Jaguars',
+  'Knights', 'Koeksisters', 'Komorants', 'Lions', 'Llamas', 'Musketeers',
+  'Panthers', 'Pirates', 'Power Rangers', 'Prom Queens', 'Proteas',
+  'Public Holiday', 'Raccoons', 'Rebels', 'Roche Assistant', 'Rockets',
+  'Samurais', 'Slayers', 'Soccer Moms', 'Spartans', 'Surfers', 'Swesties',
+  'Targaryens', 'Tigers', 'TNT', 'Tornadoes', 'Vikings', 'Vipers', 'Warriors',
+  'Weasels', 'Wizards', 'Wolves', 'Wombats',
+];
+
+function openNoteSheet(direction = 'in') {
+  // direction = 'in' | 'out' — which clock action follows submission.
+  state.sheet = { type: 'note', value: '', filter: '', direction };
   render();
 }
 
@@ -510,7 +529,7 @@ async function submitClock(action) {
     state.sheet.busy = true;
     state.sheet.error = '';
     const go = document.getElementById('sheetGo');
-    if (go) { go.classList.add('disabled'); go.classList.remove('ok'); go.innerHTML = 'Clocking in…'; }
+    if (go) { go.classList.add('disabled'); go.classList.remove('ok', 'red'); go.innerHTML = action === 'in' ? 'Clocking in…' : 'Clocking out…'; }
     const eb = document.getElementById('sheetErr');
     if (eb) { eb.style.display = 'none'; eb.textContent = ''; }
   }
@@ -520,7 +539,9 @@ async function submitClock(action) {
       // Use `dir` so the inner field doesn't clobber the outer `action`
       // (which is the dispatcher key on the Apps Script side).
       dir: action,
-      note: action === 'in' ? note : '',
+      // Send the picked campaign on BOTH directions now so the clock-out
+      // event records what they were on at the end of the shift too.
+      note: note,
     });
     state.sheet = null;
     showToast(action === 'in' ? 'Clocked in ✓' : 'Clocked out ✓');
@@ -535,10 +556,14 @@ async function submitClock(action) {
       const go = document.getElementById('sheetGo');
       if (eb) { eb.textContent = msg; eb.style.display = 'block'; }
       const ok = note.length > 0;
+      const goingIn = action === 'in';
       if (go) {
-        go.classList.toggle('ok', ok);
+        go.classList.toggle('ok',   ok && goingIn);
+        go.classList.toggle('red',  ok && !goingIn);
         go.classList.toggle('disabled', !ok);
-        go.innerHTML = ok ? 'CONFIRM &amp; CLOCK IN' : 'Add a note to continue';
+        go.innerHTML = ok
+          ? (goingIn ? 'CONFIRM &amp; CLOCK IN' : 'CONFIRM &amp; CLOCK OUT')
+          : 'Pick a campaign to continue';
       }
     } else {
       state.error = msg;
@@ -710,29 +735,40 @@ function renderSheet() {
 
 function renderNoteSheet() {
   const v = state.sheet.value || '';
-  const ok = v.trim().length > 0;
+  const filter = (state.sheet.filter || '').trim().toLowerCase();
+  const dir = state.sheet.direction || 'in';
   const err = state.sheet.error || '';
   const busy = state.sheet.busy || false;
-  const quick = ['At the office desk', 'Client viewing', 'Property inspection', 'Off-site meeting'];
+  const goingIn = dir === 'in';
+  const items = filter
+    ? CLOCK_CAMPAIGNS.filter(c => c.toLowerCase().includes(filter))
+    : CLOCK_CAMPAIGNS;
+  const ok = !!v;
+  const ctaLabel = busy
+    ? (goingIn ? 'Clocking in…' : 'Clocking out…')
+    : (ok
+        ? (goingIn ? 'CONFIRM & CLOCK IN' : 'CONFIRM & CLOCK OUT')
+        : 'Pick a campaign to continue');
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
-    <div class="sheet">
+    <div class="sheet sheet-picker">
       <div class="sheet-grip"></div>
       <div style="display:flex;align-items:center;gap:9px">
         ${icon('clipboard', 22, 'var(--blue)')}
         <div>
-          <h2>Add a note to clock in</h2>
-          <div class="req">Required · what are you working on?</div>
+          <h2>What are you working on?</h2>
+          <div class="req">Required · pick from the list below</div>
         </div>
       </div>
-      <textarea id="sheetTxt" placeholder="e.g. Client viewing at 14 Ocean View Dr, then back to office" autofocus>${escapeHtml(v)}</textarea>
-      <div class="chips">
-        ${quick.map(q => `<button class="chip" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}
+      <input id="sheetSearch" class="picker-search" type="search"
+             placeholder="Search campaigns…" value="${escapeHtml(state.sheet.filter || '')}" autocomplete="off">
+      <div class="picker-list" id="pickerList">
+        ${items.length === 0 ? '<div class="picker-empty">No match</div>' :
+          items.map(c => `<button class="picker-item ${v === c ? 'on' : ''}" data-pick="${escapeHtml(c)}">${escapeHtml(c)}${v === c ? ' ✓' : ''}</button>`).join('')}
       </div>
-      <div id="sheetErr" class="banner" style="${err ? '' : 'display:none'};margin-top:14px;margin-bottom:0">${escapeHtml(err)}</div>
-      <button class="btn-cta ${ok && !busy ? 'ok' : 'disabled'}" id="sheetGo">
-        ${busy ? 'Clocking in…' : (ok ? 'CONFIRM &amp; CLOCK IN' : 'Add a note to continue')}
-      </button>
+      ${v ? `<div class="picker-selected">Selected: <b>${escapeHtml(v)}</b></div>` : ''}
+      <div id="sheetErr" class="banner" style="${err ? '' : 'display:none'};margin-top:10px;margin-bottom:0">${escapeHtml(err)}</div>
+      <button class="btn-cta ${ok && !busy ? (goingIn ? 'ok' : 'red') : 'disabled'}" id="sheetGo">${ctaLabel}</button>
     </div>
   </div>`;
 }
@@ -775,35 +811,49 @@ function wireSheet() {
   if (back) back.addEventListener('click', () => { state.sheet = null; render(); });
   if (state.sheet.type === 'report') { wireReportSheet(); return; }
   if (state.sheet.type === 'note') {
-    const txt = document.getElementById('sheetTxt');
-    const go  = document.getElementById('sheetGo');
-    // Focus the textarea on open. autofocus alone is unreliable after innerHTML reflows.
-    if (txt) { setTimeout(() => { try { txt.focus(); txt.setSelectionRange(txt.value.length, txt.value.length); } catch {} }, 0); }
-    // Update state silently on every keystroke; reflect button state directly
-    // in the DOM so we don't re-render and lose focus.
-    if (txt && go) {
-      txt.addEventListener('input', () => {
-        state.sheet.value = txt.value;
-        const ok = txt.value.trim().length > 0 && !state.sheet.busy;
-        go.classList.toggle('ok', ok);
-        go.classList.toggle('disabled', !ok);
-        go.innerHTML = state.sheet.busy ? 'Clocking in…' : (ok ? 'CONFIRM &amp; CLOCK IN' : 'Add a note to continue');
+    const search = document.getElementById('sheetSearch');
+    const list   = document.getElementById('pickerList');
+    const go     = document.getElementById('sheetGo');
+    const dir    = state.sheet.direction || 'in';
+    if (search) setTimeout(() => { try { search.focus(); } catch {} }, 0);
+    // Re-filter the list on every keystroke without nuking the whole sheet
+    // (preserves search input focus + scroll position).
+    if (search) search.addEventListener('input', () => {
+      state.sheet.filter = search.value;
+      const f = search.value.trim().toLowerCase();
+      const items = f ? CLOCK_CAMPAIGNS.filter(c => c.toLowerCase().includes(f)) : CLOCK_CAMPAIGNS;
+      if (!list) return;
+      list.innerHTML = items.length === 0
+        ? '<div class="picker-empty">No match</div>'
+        : items.map(c => `<button class="picker-item ${state.sheet.value === c ? 'on' : ''}" data-pick="${escapeHtml(c)}">${escapeHtml(c)}${state.sheet.value === c ? ' ✓' : ''}</button>`).join('');
+      bindPickerItems();
+    });
+    const bindPickerItems = () => {
+      document.querySelectorAll('.picker-item').forEach(b => {
+        b.addEventListener('click', () => {
+          const v = b.dataset.pick;
+          state.sheet.value = v;
+          // Update UI in-place — don't re-render the whole sheet.
+          document.querySelectorAll('.picker-item').forEach(x => {
+            const on = x.dataset.pick === v;
+            x.classList.toggle('on', on);
+            x.textContent = x.dataset.pick + (on ? ' ✓' : '');
+          });
+          const sel = document.querySelector('.picker-selected');
+          if (sel) sel.innerHTML = `Selected: <b>${escapeHtml(v)}</b>`;
+          if (go) {
+            go.classList.remove('disabled');
+            go.classList.add(dir === 'in' ? 'ok' : 'red');
+            go.innerHTML = (dir === 'in' ? 'CONFIRM &amp; CLOCK IN' : 'CONFIRM &amp; CLOCK OUT');
+          }
+        });
       });
-    }
-    document.querySelectorAll('.sheet .chip').forEach(c => c.addEventListener('click', () => {
-      const q = c.dataset.q;
-      state.sheet.value = q;
-      if (txt) {
-        txt.value = q;
-        txt.focus();
-        try { txt.setSelectionRange(q.length, q.length); } catch {}
-        txt.dispatchEvent(new Event('input'));
-      }
-    }));
+    };
+    bindPickerItems();
     if (go) go.addEventListener('click', () => {
       if (state.sheet.busy) return;
       if (!state.sheet.value || !state.sheet.value.trim()) return;
-      submitClock('in');
+      submitClock(dir);
     });
   }
   if (state.sheet.type === 'request') {
