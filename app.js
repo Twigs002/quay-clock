@@ -287,6 +287,18 @@ function render() {
     wireLogin();
     return;
   }
+  // Remember which input had focus + caret position so we can restore
+  // it after the innerHTML wipe. Closes the bug where every keystroke
+  // inside the EOD report / picker / leave form blurred the field and
+  // forced the user to tap back in.
+  const ae = document.activeElement;
+  const focusInfo = (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) ? {
+    id:    ae.id || null,
+    key:   ae.dataset ? ae.dataset.repKey : null,
+    start: typeof ae.selectionStart === 'number' ? ae.selectionStart : null,
+    end:   typeof ae.selectionEnd   === 'number' ? ae.selectionEnd   : null,
+  } : null;
+
   let body;
   if (state.tab === 'home')      body = renderHome();
   else if (state.tab === 'timesheet') body = renderTimesheet();
@@ -305,6 +317,19 @@ function render() {
   if (state.tab === 'leave') wireLeave();
   if (state.tab === 'team') wireTeam();
   if (state.sheet) wireSheet();
+
+  // Restore focus + caret to the same input the user was typing in.
+  if (focusInfo) {
+    let target = null;
+    if (focusInfo.id)  target = document.getElementById(focusInfo.id);
+    if (!target && focusInfo.key) target = document.querySelector(`[data-rep-key="${focusInfo.key}"]`);
+    if (target) {
+      try { target.focus({ preventScroll: true }); } catch { target.focus(); }
+      if (focusInfo.start != null && typeof target.setSelectionRange === 'function') {
+        try { target.setSelectionRange(focusInfo.start, focusInfo.end); } catch {}
+      }
+    }
+  }
 }
 
 function renderTabBar() {
