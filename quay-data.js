@@ -72,6 +72,8 @@ function publicAgent(s) {
     role: s.role || '', team: s.team || '',
     admin: !!s.is_admin,
     super: !!s.is_super,
+    designation: s.designation || '',
+    division: s.division || '',
   };
 }
 
@@ -227,6 +229,8 @@ const handlers = {
         id: s.id, name: s.name, role: s.role || '', team: s.team || '',
         admin: !!s.is_admin,
         super: !!s.is_super,
+        designation: s.designation || '',
+        division: s.division || '',
         hourly_rate:  s.hourly_rate  != null ? Number(s.hourly_rate)  : null,
         weekly_hours: s.weekly_hours != null ? Number(s.weekly_hours) : null,
         status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
@@ -391,6 +395,8 @@ const handlers = {
       patch.hourly_rate = (payload.hourly_rate === '' || payload.hourly_rate == null) ? null : Number(payload.hourly_rate);
     if (payload.weekly_hours !== undefined)
       patch.weekly_hours = (payload.weekly_hours === '' || payload.weekly_hours == null) ? null : Number(payload.weekly_hours);
+    if (payload.designation !== undefined) patch.designation = payload.designation || null;
+    if (payload.division !== undefined)    patch.division    = payload.division || null;
     const { error } = await sb.from('staff').update(patch).eq('id', id);
     if (error) return { ok: false, error: error.message };
     return { ok: true };
@@ -455,6 +461,52 @@ const handlers = {
     const { error } = await q;
     if (error) return { ok: false, error: error.message };
     return { ok: true };
+  },
+
+  // Clock-out report (LN / Assistant). Insert is gated by RLS — only the
+  // signed-in staff member can insert their own row (or an admin).
+  async clock_out_report_submit(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const row = {
+      staff_id: payload.staff_id || me.id,
+      designation: payload.designation || me.designation || '',
+      division: payload.division || me.division || '',
+      hs_tasks_completed:    +payload.hs_tasks_completed    || 0,
+      hs_calls_made:         +payload.hs_calls_made         || 0,
+      hs_emails_sent:        +payload.hs_emails_sent        || 0,
+      hs_whatsapps_sent:     +payload.hs_whatsapps_sent     || 0,
+      hs_answered_contacts:  +payload.hs_answered_contacts  || 0,
+      hs_leads_vals:         +payload.hs_leads_vals         || 0,
+      hs_reconverted_leads:  +payload.hs_reconverted_leads  || 0,
+      df_calls:              +payload.df_calls              || 0,
+      df_email_successes:    +payload.df_email_successes    || 0,
+      df_leads_vals:         +payload.df_leads_vals         || 0,
+      df_hours:              +payload.df_hours              || 0,
+      wa_sent:               +payload.wa_sent               || 0,
+      wa_responses:          +payload.wa_responses          || 0,
+      wa_leads_vals:         +payload.wa_leads_vals         || 0,
+      notes:                 String(payload.notes || ''),
+    };
+    const { data, error } = await sb.from('clock_out_reports')
+      .insert(row).select('*').single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, report: data };
+  },
+
+  // Fetch all reports (admins / managers). Pages of 200 newest-first.
+  async clock_out_reports_list(payload = {}) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
+    let q = sb.from('clock_out_reports').select('*')
+      .order('clocked_out_at', { ascending: false })
+      .limit(Math.min(500, Math.max(1, +payload.limit || 200)));
+    if (payload.from) q = q.gte('clocked_out_at', payload.from);
+    if (payload.to)   q = q.lte('clocked_out_at', payload.to);
+    if (payload.staff_id) q = q.eq('staff_id', payload.staff_id);
+    const { data, error } = await q;
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, reports: data || [] };
   },
 };
 
