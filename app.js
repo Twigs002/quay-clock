@@ -191,6 +191,30 @@ async function loadHome() {
     weekHrs: data.weekHrs || 0,
     weekTarget: data.weekTarget || 40,
   };
+  // Tier 1 #2 — auto-prompt "did you forget to clock out yesterday?".
+  // Fires when the user is still 'in' AND the last clock-in was more
+  // than 12 hours ago. The prompt is one-shot per session so a user
+  // who genuinely is still on shift doesn't get nagged every render.
+  if (data.status === 'in' && data.lastIn && !state._forgotPromptShown) {
+    const elapsedHrs = (Date.now() - new Date(data.lastIn).getTime()) / 3.6e6;
+    if (elapsedHrs >= 12) {
+      state._forgotPromptShown = true;
+      // Default the corrective end-time to 17:00 on the day they
+      // started — adjust before submitting if it was different.
+      const start = new Date(data.lastIn);
+      const fixed = new Date(start);
+      fixed.setHours(17, 0, 0, 0);
+      state.sheet = {
+        type: 'forgot',
+        date: fixed.toISOString().slice(0, 10),
+        time: '17:00',
+        startISO: data.lastIn,
+        elapsedHrs,
+        busy: false,
+        error: '',
+      };
+    }
+  }
 }
 async function loadTimesheet() {
   const now = new Date();
@@ -453,8 +477,17 @@ function renderHome() {
   const todayDisplay = on ? elapsed.slice(0, elapsed.lastIndexOf(':')) : fmtHM(h.todayHrs);
   const weekDisplay = fmtHM(h.weekHrs);
   const weekPct = Math.min(1, (h.weekHrs || 0) / (h.weekTarget || 40));
+  // Tier 1 #3 — flag when the user has been clocked in >12h (likely
+  // forgot to clock out yesterday). The auto-prompt handles the
+  // explicit fix; the red ring is a passive visual reminder if they
+  // dismissed the modal but didn't act.
+  const elapsedHrs = on && h.lastIn
+    ? (Date.now() - new Date(h.lastIn).getTime()) / 3.6e6
+    : 0;
+  const overdue = elapsedHrs >= 12;
+  const ringColor = overdue ? 'var(--red)' : 'var(--yellow)';
   const ring = on
-    ? `<circle cx="104" cy="104" r="98" fill="none" stroke="var(--yellow)" stroke-width="8" stroke-linecap="round" stroke-dasharray="615" stroke-dashoffset="430" transform="rotate(-90 104 104)"/>`
+    ? `<circle cx="104" cy="104" r="98" fill="none" stroke="${ringColor}" stroke-width="8" stroke-linecap="round" stroke-dasharray="615" stroke-dashoffset="430" transform="rotate(-90 104 104)"/>`
     : '';
 
   const header = renderHeader({ centerLogo: true, greet, date: fmtDate(now) });
@@ -463,6 +496,7 @@ function renderHome() {
       ${state.error ? `<div class="banner">${escapeHtml(state.error)}</div>` : ''}
       <div class="card-big pad-lg home-card">
         <div class="pill ${on ? 'pill-status-in' : 'pill-status-out'}"><span class="dot"></span>${on ? 'On the clock' : 'Clocked out'}</div>
+        ${overdue ? `<div class="pill pill-overdue" style="margin-top:6px"><span class="dot"></span>${elapsedHrs.toFixed(1)} hrs — clock out is overdue</div>` : ''}
         <div class="dial">
           <svg width="208" height="208" viewBox="0 0 208 208">
             <circle cx="104" cy="104" r="98" fill="none" stroke="var(--line)" stroke-width="8"/>
@@ -543,7 +577,11 @@ const CLOCK_CAMPAIGNS = [
 
 function openNoteSheet(direction = 'in') {
   // direction = 'in' | 'out' — which clock action follows submission.
-  state.sheet = { type: 'note', value: '', filter: '', direction };
+  // Tier 1 #1 — preselect whatever they picked last time so the common
+  // case is tap → confirm (not search → tap → confirm).
+  const lastNote = (state.home && state.home.lastNote) || '';
+  const preselect = CLOCK_CAMPAIGNS.includes(lastNote) ? lastNote : '';
+  state.sheet = { type: 'note', value: preselect, filter: '', direction };
   render();
 }
 
@@ -749,12 +787,82 @@ async function submitClockOutReport() {
   }
 }
 
+// ───── FORGOT TO CLOCK OUT SHEET (auto-shown when last shift > 12h) ──
+function renderForgotSheet() {
+  const f = state.sheet;
+  const startDate = new Date(f.startISO);
+  const startStr = startDate.toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const busy = f.busy;
+  return `<div class="sheet-wrap" id="sheetWrap">
+    <div class="sheet-back" id="sheetBack"></div>
+    <div class="sheet sheet-forgot">
+      <div class="sheet-grip"></div>
+      <div style="display:flex;align-items:center;gap:9px">
+        ${icon('clock', 22, 'var(--red)')}
+        <div>
+          <h2>Forgot to clock out?</h2>
+          <div class="req" style="color:var(--muted)">You clocked in <b>${escapeHtml(startStr)}</b> — that's <b>${f.elapsedHrs.toFixed(1)} hours ago</b>.</div>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Date you actually finished</label>
+        <input id="fgDate" type="date" value="${f.date}" style="margin-top:4px;width:100%">
+        <label style="display:block;margin-top:10px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Time you actually finished</label>
+        <input id="fgTime" type="time" value="${f.time}" style="margin-top:4px;width:100%">
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px">
+        <button class="btn small" data-fg-quick="17:00">5 PM that day</button>
+        <button class="btn small" data-fg-quick="now">Now</button>
+      </div>
+      ${f.error ? `<div class="banner" style="margin-top:10px">${escapeHtml(f.error)}</div>` : ''}
+      <button class="btn-cta ${busy ? 'disabled' : 'ok'}" id="sheetGo" style="margin-top:16px">
+        ${busy ? 'Saving…' : 'CLOCK OUT AT THIS TIME'}
+      </button>
+      <button class="btn-cta" id="fgStillHere" style="margin-top:8px;background:var(--paper);color:var(--ink)">
+        I'm actually still on the clock
+      </button>
+    </div>
+  </div>`;
+}
+
+async function submitForgotClockOut() {
+  const f = state.sheet;
+  if (!f || f.busy) return;
+  const ts = new Date(`${f.date}T${f.time}:00`);
+  if (isNaN(ts.getTime())) {
+    f.error = 'Pick a valid date and time.'; render(); return;
+  }
+  if (ts.getTime() < new Date(f.startISO).getTime()) {
+    f.error = 'End time has to be AFTER your clock-in.'; render(); return;
+  }
+  if (ts.getTime() > Date.now() + 60000) {
+    f.error = 'End time can\'t be in the future.'; render(); return;
+  }
+  f.busy = true; f.error = ''; render();
+  try {
+    const res = await api('clock_correction', {
+      ts: ts.toISOString(),
+      note: 'Auto-corrected: forgot to clock out',
+    });
+    if (!res || res.ok === false) throw new Error(res && res.error || 'Could not save');
+    state.sheet = null;
+    showToast('Saved ✓ — clocked out at ' + f.time);
+    await loadHome();
+    render();
+  } catch (e) {
+    f.busy = false;
+    f.error = String(e.message || e);
+    render();
+  }
+}
+
 // ───── NOTE SHEET (and LEAVE SHEET) ─────────────────────────────────
 function renderSheet() {
   if (!state.sheet) return '';
   if (state.sheet.type === 'note') return renderNoteSheet();
   if (state.sheet.type === 'request') return renderLeaveSheet();
   if (state.sheet.type === 'report')  return renderReportSheet();
+  if (state.sheet.type === 'forgot')  return renderForgotSheet();
   return '';
 }
 
@@ -835,6 +943,28 @@ function wireSheet() {
   const back = document.getElementById('sheetBack');
   if (back) back.addEventListener('click', () => { state.sheet = null; render(); });
   if (state.sheet.type === 'report') { wireReportSheet(); return; }
+  if (state.sheet.type === 'forgot') {
+    const dateEl = document.getElementById('fgDate');
+    const timeEl = document.getElementById('fgTime');
+    if (dateEl) dateEl.addEventListener('input', e => { state.sheet.date = e.target.value; });
+    if (timeEl) timeEl.addEventListener('input', e => { state.sheet.time = e.target.value; });
+    document.querySelectorAll('[data-fg-quick]').forEach(b => b.addEventListener('click', () => {
+      const v = b.dataset.fgQuick;
+      if (v === 'now') {
+        const now = new Date();
+        state.sheet.date = now.toISOString().slice(0, 10);
+        state.sheet.time = now.toTimeString().slice(0, 5);
+      } else {
+        state.sheet.time = v;
+      }
+      render();
+    }));
+    const go = document.getElementById('sheetGo');
+    if (go) go.addEventListener('click', submitForgotClockOut);
+    const still = document.getElementById('fgStillHere');
+    if (still) still.addEventListener('click', () => { state.sheet = null; render(); });
+    return;
+  }
   if (state.sheet.type === 'note') {
     const search = document.getElementById('sheetSearch');
     const list   = document.getElementById('pickerList');

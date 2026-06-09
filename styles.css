@@ -495,3 +495,25 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
   font-size: 13px; color: var(--ink);
 }
 .btn-cta.red { background: var(--red); color: #fff; }
+
+/* Overdue clock-out pill on the home dial (>12h since clock-in) */
+.pill-overdue {
+  background: rgba(210, 10, 3, 0.1);
+  color: var(--red);
+  border: 1px solid rgba(210, 10, 3, 0.3);
+  font-weight: 700;
+}
+.pill-overdue .dot { background: var(--red); animation: pulse-dot 1.4s ease-out infinite; }
+@keyframes pulse-dot {
+  0%   { box-shadow: 0 0 0 0 rgba(210, 10, 3, 0.5); }
+  70%  { box-shadow: 0 0 0 8px rgba(210, 10, 3, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(210, 10, 3, 0); }
+}
+
+/* Forgot-to-clock-out sheet */
+.sheet-forgot input[type=date],
+.sheet-forgot input[type=time] {
+  width: 100%; padding: 11px 14px; border: 1px solid var(--line);
+  border-radius: 12px; background: #fff; font-family: Montserrat;
+  font-size: 15px; -webkit-appearance: none;
+}
