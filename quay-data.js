@@ -372,6 +372,8 @@ const handlers = {
         hourly_rate:  payload.hourly_rate ?? null,
         weekly_hours: payload.weekly_hours ?? null,
         is_super: !!payload.super,
+        designation: payload.designation ?? null,
+        division:    payload.division    ?? null,
       }),
     });
     const body = await res.json().catch(() => ({}));
