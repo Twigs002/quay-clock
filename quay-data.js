@@ -454,6 +454,23 @@ const handlers = {
     return { ok: true };
   },
 
+  // Self-service "I forgot to clock out" corrective event. Inserts a
+  // dir=out event with a custom past timestamp. RLS allows this
+  // because events_insert_self matches the caller's own staff_id.
+  async clock_correction(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const ts = payload.ts || new Date().toISOString();
+    const { error } = await sb.from('events').insert({
+      staff_id: me.id,
+      ts,
+      dir: 'out',
+      note: payload.note || 'Forgot to clock out — corrected',
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  },
+
   async event_delete(payload) {
     const me = _selfStaff || await loadSelfStaff();
     if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
