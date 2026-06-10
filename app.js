@@ -27,6 +27,11 @@ const state = {
   timesheet: null,       // { weekBars, entries, totalHrs, target }
   leave: null,           // { balances, requests }
   team: null,            // [ { id, name, role, status, cin, loc, note } ]
+  tasks: null,           // [ { id, title, status, priority, assigned_to, ... } ]
+  tasksFilter: { status: '', assigned: '' },
+  tasksDetail: null,     // { task, comments }
+  tasksCreate: null,     // form state when create modal open
+  rosterCache: null,     // [{id, name}] for assignee dropdowns
   // UI flags
   sheet: null,           // { type: 'note' | 'request', ... }
   toast: null,
@@ -173,6 +178,7 @@ async function loadTab(tab) {
     if (tab === 'timesheet') await loadTimesheet();
     if (tab === 'leave')     await loadLeave();
     if (tab === 'team')      await loadTeam();
+    if (tab === 'tasks')     await loadTasks();
   } catch (e) {
     state.error = e.message;
   } finally {
@@ -232,6 +238,18 @@ async function loadLeave() {
 async function loadTeam() {
   const data = await api('team_today', {});
   state.team = data.team || [];
+}
+
+// ── Tasks board ─────────────────────────────────────────────────────
+async function loadTasks() {
+  const [tasksRes, rosterRes] = await Promise.all([
+    api('tasks_list', state.tasksFilter || {}),
+    state.rosterCache ? Promise.resolve({ ok: true }) : api('roster', {}),
+  ]);
+  state.tasks = tasksRes.tasks || [];
+  if (rosterRes && rosterRes.roster) {
+    state.rosterCache = rosterRes.roster.map(r => ({ id: r.id, name: r.name }));
+  }
 }
 
 function buildTimesheet(events, now) {
@@ -328,6 +346,7 @@ function render() {
   else if (state.tab === 'timesheet') body = renderTimesheet();
   else if (state.tab === 'leave')     body = renderLeave();
   else if (state.tab === 'team')      body = renderTeam();
+  else if (state.tab === 'tasks')     body = renderTasks();
   else body = '<div class="loading">…</div>';
 
   let extra = '';
@@ -340,6 +359,7 @@ function render() {
   if (state.tab === 'timesheet') wireTimesheet();
   if (state.tab === 'leave') wireLeave();
   if (state.tab === 'team') wireTeam();
+  if (state.tab === 'tasks') wireTasks();
   if (state.sheet) wireSheet();
 
   // Restore focus + caret to the same input the user was typing in.
@@ -360,6 +380,7 @@ function renderTabBar() {
   const tabs = [
     ['home','Home','home'],
     ['timesheet','Timesheet','clipboard'],
+    ['tasks','Tasks','check'],
     ['leave','Requests','calendar'],
     ['team','Team','users'],
   ];
@@ -1175,6 +1196,323 @@ function formatDateRange(a, b) {
   const fmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   if (a === b || !b) return fmt(da);
   return fmt(da) + ' – ' + fmt(db);
+}
+
+// ───── TASKS BOARD ──────────────────────────────────────────────────
+// Data requests / progress / feedback. Anyone signed-in can submit and
+// comment; owner OR assignee can update status. Realtime via Supabase.
+const TASK_STATUS = {
+  open:        { label: 'Open',         color: '#3D5BA6' },
+  in_progress: { label: 'In Progress',  color: '#FDC503' },
+  blocked:     { label: 'Blocked',      color: '#D20A03' },
+  done:        { label: 'Done',         color: '#1FA463' },
+  cancelled:   { label: 'Cancelled',    color: '#9AA3AD' },
+};
+const TASK_PRIORITY = {
+  urgent: { label: 'Urgent', color: '#D20A03' },
+  high:   { label: 'High',   color: '#E27A03' },
+  med:    { label: 'Medium', color: '#3D5BA6' },
+  low:    { label: 'Low',    color: '#9AA3AD' },
+};
+
+function renderTasks() {
+  const list = state.tasks || [];
+  const filt = state.tasksFilter || {};
+  const filtered = list.filter(t => {
+    if (filt.status && t.status !== filt.status) return false;
+    if (filt.assigned === 'mine' && t.assigned_to !== state.agent.id) return false;
+    if (filt.assigned === 'unassigned' && t.assigned_to) return false;
+    return true;
+  });
+  const head = renderHeader({ title: 'Tasks', sub: 'Data requests · progress · feedback' });
+  const nameOf = (id) => {
+    if (!id) return '—';
+    const r = (state.rosterCache || []).find(x => x.id === id);
+    return r ? r.name : id;
+  };
+  const dueBadge = (d) => {
+    if (!d) return '';
+    const today = new Date(); today.setHours(0,0,0,0);
+    const due = new Date(d + 'T00:00:00');
+    const dayDelta = Math.round((due - today) / 86400000);
+    const cls = dayDelta < 0 ? 'task-due-late' : dayDelta === 0 ? 'task-due-today' : '';
+    const txt = dayDelta < 0
+      ? `Overdue ${Math.abs(dayDelta)}d`
+      : dayDelta === 0 ? 'Due today'
+      : dayDelta <= 7 ? `Due in ${dayDelta}d`
+      : `Due ${due.toLocaleDateString('en-GB',{day:'numeric', month:'short'})}`;
+    return `<span class="task-due ${cls}">${escapeHtml(txt)}</span>`;
+  };
+  const card = (t) => {
+    const st = TASK_STATUS[t.status] || TASK_STATUS.open;
+    const pr = TASK_PRIORITY[t.priority] || TASK_PRIORITY.med;
+    return `<button class="task-card" data-task-id="${escapeHtml(t.id)}">
+      <div class="task-card-top">
+        <span class="task-status" style="background:${st.color}1a;color:${st.color}">${st.label}</span>
+        <span class="task-prio" style="background:${pr.color}1a;color:${pr.color}">${pr.label}</span>
+        ${dueBadge(t.due_date)}
+      </div>
+      <div class="task-title">${escapeHtml(t.title)}</div>
+      ${t.description ? `<div class="task-desc">${escapeHtml(t.description).slice(0, 140)}${t.description.length > 140 ? '…' : ''}</div>` : ''}
+      <div class="task-meta">
+        <span>From <b>${escapeHtml(nameOf(t.requested_by))}</b></span>
+        <span>${t.assigned_to ? 'To <b>' + escapeHtml(nameOf(t.assigned_to)) + '</b>' : '<i>Unassigned</i>'}</span>
+      </div>
+    </button>`;
+  };
+  const filterPill = (key, value, label) => `<button class="tf-pill ${(filt[key] === value) ? 'on' : ''}" data-tfilter="${key}" data-tvalue="${value}">${label}</button>`;
+  return `${head}
+    <div class="content">
+      ${state.error ? `<div class="banner">${escapeHtml(state.error)}</div>` : ''}
+      <div class="task-toolbar">
+        <button class="btn-cta sm ok" id="tasksAddBtn">${icon('plus', 16, '#fff', 2.2)} New task</button>
+        <div class="task-filters">
+          ${filterPill('status', '', 'All')}
+          ${filterPill('status', 'open', 'Open')}
+          ${filterPill('status', 'in_progress', 'In Prog')}
+          ${filterPill('status', 'blocked', 'Blocked')}
+          ${filterPill('status', 'done', 'Done')}
+        </div>
+        <div class="task-filters">
+          ${filterPill('assigned', '', 'Everyone')}
+          ${filterPill('assigned', 'mine', 'Mine')}
+          ${filterPill('assigned', 'unassigned', 'Unassigned')}
+        </div>
+      </div>
+      ${list === null ? '<div class="loading">…</div>' :
+        filtered.length === 0 ?
+          '<div class="task-empty">No tasks match this filter. Tap “New task” to add one.</div>' :
+          filtered.map(card).join('')}
+    </div>
+    ${state.tasksDetail ? renderTaskDetail() : ''}
+    ${state.tasksCreate ? renderTaskCreate() : ''}
+  `;
+}
+
+function wireTasks() {
+  document.querySelectorAll('[data-tfilter]').forEach(b => {
+    b.addEventListener('click', () => {
+      state.tasksFilter[b.dataset.tfilter] = b.dataset.tvalue;
+      loadTasks().then(render);
+    });
+  });
+  document.querySelectorAll('button[data-task-id]').forEach(b => {
+    b.addEventListener('click', () => openTaskDetail(b.dataset.taskId));
+  });
+  const add = document.getElementById('tasksAddBtn');
+  if (add) add.addEventListener('click', openTaskCreate);
+  if (state.tasksCreate) wireTaskCreate();
+  if (state.tasksDetail) wireTaskDetail();
+}
+
+function openTaskCreate() {
+  state.tasksCreate = {
+    title: '', description: '',
+    priority: 'med', due_date: '',
+    assigned_to: '', busy: false, error: '',
+  };
+  render();
+}
+
+function renderTaskCreate() {
+  const f = state.tasksCreate;
+  const roster = state.rosterCache || [];
+  return `<div class="sheet-wrap" id="sheetWrap">
+    <div class="sheet-back" id="taskBack"></div>
+    <div class="sheet sheet-task">
+      <div class="sheet-grip"></div>
+      <div style="display:flex;align-items:center;gap:9px">
+        ${icon('plus', 22, 'var(--blue)')}
+        <h2>New task</h2>
+      </div>
+      <label class="task-field">
+        <span class="task-label">Title</span>
+        <input id="taskTitle" type="text" value="${escapeHtml(f.title)}" placeholder="e.g. Pull this month's HubSpot deals export" autofocus>
+      </label>
+      <label class="task-field">
+        <span class="task-label">Details</span>
+        <textarea id="taskDesc" placeholder="Anything I need to know — context, links, format, deadline reason…" rows="4">${escapeHtml(f.description)}</textarea>
+      </label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label class="task-field">
+          <span class="task-label">Priority</span>
+          <select id="taskPrio">
+            ${Object.entries(TASK_PRIORITY).map(([k, v]) => `<option value="${k}" ${f.priority === k ? 'selected' : ''}>${v.label}</option>`).join('')}
+          </select>
+        </label>
+        <label class="task-field">
+          <span class="task-label">Due date</span>
+          <input id="taskDue" type="date" value="${escapeHtml(f.due_date)}">
+        </label>
+      </div>
+      <label class="task-field">
+        <span class="task-label">Assign to</span>
+        <select id="taskAssign">
+          <option value="">— unassigned —</option>
+          ${roster.map(r => `<option value="${escapeHtml(r.id)}" ${f.assigned_to === r.id ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('')}
+        </select>
+      </label>
+      ${f.error ? `<div class="banner">${escapeHtml(f.error)}</div>` : ''}
+      <button class="btn-cta ${f.busy || !f.title.trim() ? 'disabled' : 'ok'}" id="taskCreateGo">
+        ${f.busy ? 'Creating…' : 'CREATE TASK'}
+      </button>
+    </div>
+  </div>`;
+}
+
+function wireTaskCreate() {
+  const f = state.tasksCreate;
+  const close = () => { state.tasksCreate = null; render(); };
+  document.getElementById('taskBack').addEventListener('click', close);
+  const t = document.getElementById('taskTitle');
+  const d = document.getElementById('taskDesc');
+  const p = document.getElementById('taskPrio');
+  const dd = document.getElementById('taskDue');
+  const a = document.getElementById('taskAssign');
+  if (t) t.addEventListener('input', () => { f.title = t.value; });
+  if (d) d.addEventListener('input', () => { f.description = d.value; });
+  if (p) p.addEventListener('change', () => { f.priority = p.value; });
+  if (dd) dd.addEventListener('input', () => { f.due_date = dd.value; });
+  if (a) a.addEventListener('change', () => { f.assigned_to = a.value; });
+  document.getElementById('taskCreateGo').addEventListener('click', async () => {
+    if (!f.title.trim() || f.busy) return;
+    f.busy = true; f.error = ''; render();
+    const res = await api('tasks_create', f);
+    if (!res || res.ok === false) {
+      f.busy = false; f.error = (res && res.error) || 'Could not create';
+      render(); return;
+    }
+    state.tasksCreate = null;
+    showToast('Task created ✓');
+    await loadTasks();
+    render();
+  });
+}
+
+async function openTaskDetail(id) {
+  const task = (state.tasks || []).find(t => t.id === id);
+  if (!task) return;
+  state.tasksDetail = { task, comments: null, draft: '', busy: false, error: '' };
+  render();
+  const res = await api('task_comments_list', { task_id: id });
+  if (state.tasksDetail && state.tasksDetail.task.id === id) {
+    state.tasksDetail.comments = res.comments || [];
+    render();
+  }
+}
+
+function renderTaskDetail() {
+  const d = state.tasksDetail;
+  const t = d.task;
+  const roster = state.rosterCache || [];
+  const nameOf = (id) => {
+    if (!id) return '—';
+    const r = roster.find(x => x.id === id);
+    return r ? r.name : id;
+  };
+  const canEdit = t.requested_by === state.agent.id
+               || t.assigned_to  === state.agent.id
+               || !!state.agent.admin;
+  const stOpts = Object.entries(TASK_STATUS).map(([k, v]) =>
+    `<option value="${k}" ${t.status === k ? 'selected' : ''}>${v.label}</option>`).join('');
+  const prOpts = Object.entries(TASK_PRIORITY).map(([k, v]) =>
+    `<option value="${k}" ${t.priority === k ? 'selected' : ''}>${v.label}</option>`).join('');
+  const asOpts = `<option value="">— unassigned —</option>` +
+    roster.map(r => `<option value="${escapeHtml(r.id)}" ${t.assigned_to === r.id ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('');
+  const comments = d.comments;
+  return `<div class="sheet-wrap" id="sheetWrap">
+    <div class="sheet-back" id="taskBack"></div>
+    <div class="sheet sheet-task">
+      <div class="sheet-grip"></div>
+      <div style="display:flex;align-items:flex-start;gap:9px;justify-content:space-between">
+        <h2 style="margin:0;flex:1">${escapeHtml(t.title)}</h2>
+        <button class="sheet-close" id="taskClose">${icon('x', 18, 'var(--muted)')}</button>
+      </div>
+      <div class="task-meta" style="margin-top:6px">
+        From <b>${escapeHtml(nameOf(t.requested_by))}</b> · created ${new Date(t.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}
+      </div>
+      ${t.description ? `<div class="task-detail-desc">${escapeHtml(t.description)}</div>` : ''}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <label class="task-field">
+          <span class="task-label">Status</span>
+          <select id="tdStatus" ${canEdit ? '' : 'disabled'}>${stOpts}</select>
+        </label>
+        <label class="task-field">
+          <span class="task-label">Priority</span>
+          <select id="tdPrio" ${canEdit ? '' : 'disabled'}>${prOpts}</select>
+        </label>
+        <label class="task-field">
+          <span class="task-label">Due date</span>
+          <input id="tdDue" type="date" value="${escapeHtml(t.due_date || '')}" ${canEdit ? '' : 'disabled'}>
+        </label>
+        <label class="task-field">
+          <span class="task-label">Assigned to</span>
+          <select id="tdAssign" ${canEdit ? '' : 'disabled'}>${asOpts}</select>
+        </label>
+      </div>
+      ${!canEdit ? '<div class="muted" style="font-size:11.5px;margin-top:4px">Only the requester, assignee or an admin can change these.</div>' : ''}
+      <div class="task-comments-head">Comments</div>
+      <div class="task-comments">
+        ${comments === null ? '<div class="muted">Loading…</div>' :
+          comments.length === 0 ? '<div class="muted">No comments yet.</div>' :
+          comments.map(c => `<div class="task-comment">
+            <div class="task-comment-head"><b>${escapeHtml(nameOf(c.author_id))}</b><span>${new Date(c.created_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span></div>
+            <div class="task-comment-body">${escapeHtml(c.body)}</div>
+          </div>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <textarea id="tdComment" rows="2" placeholder="Add a comment…" style="flex:1">${escapeHtml(d.draft)}</textarea>
+        <button class="btn-cta ok" id="tdCommentGo" style="margin:0;align-self:stretch;padding:0 18px">Send</button>
+      </div>
+      ${d.error ? `<div class="banner" style="margin-top:8px">${escapeHtml(d.error)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function wireTaskDetail() {
+  const d = state.tasksDetail; if (!d) return;
+  const close = () => { state.tasksDetail = null; render(); };
+  document.getElementById('taskBack').addEventListener('click', close);
+  document.getElementById('taskClose').addEventListener('click', close);
+  const debouncedUpdate = (patch) => {
+    api('tasks_update', { id: d.task.id, ...patch })
+      .then(r => {
+        if (!r || r.ok === false) {
+          d.error = (r && r.error) || 'Update failed';
+          render(); return;
+        }
+        Object.assign(d.task, patch);
+        // Also reflect in the cached list.
+        const i = (state.tasks || []).findIndex(x => x.id === d.task.id);
+        if (i >= 0) Object.assign(state.tasks[i], patch);
+      });
+  };
+  const st = document.getElementById('tdStatus');
+  const pr = document.getElementById('tdPrio');
+  const du = document.getElementById('tdDue');
+  const as = document.getElementById('tdAssign');
+  if (st) st.addEventListener('change', () => debouncedUpdate({ status:   st.value }));
+  if (pr) pr.addEventListener('change', () => debouncedUpdate({ priority: pr.value }));
+  if (du) du.addEventListener('change', () => debouncedUpdate({ due_date: du.value }));
+  if (as) as.addEventListener('change', () => debouncedUpdate({ assigned_to: as.value }));
+  const ta = document.getElementById('tdComment');
+  if (ta) ta.addEventListener('input', () => { d.draft = ta.value; });
+  document.getElementById('tdCommentGo').addEventListener('click', async () => {
+    const body = (d.draft || '').trim();
+    if (!body || d.busy) return;
+    d.busy = true; d.error = ''; render();
+    const res = await api('task_comments_create', { task_id: d.task.id, body });
+    if (!res || res.ok === false) {
+      d.busy = false;
+      d.error = (res && res.error) || 'Could not post';
+      render(); return;
+    }
+    d.draft = '';
+    d.busy = false;
+    if (Array.isArray(d.comments)) d.comments.push(res.comment);
+    else d.comments = [res.comment];
+    render();
+  });
 }
 
 // ───── TEAM ─────────────────────────────────────────────────────────

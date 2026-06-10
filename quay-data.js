@@ -454,6 +454,86 @@ const handlers = {
     return { ok: true };
   },
 
+  // ─── Tasks board (data requests / progress / feedback) ──────────────
+  async tasks_list(payload = {}) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    let q = sb.from('tasks').select('*').order('updated_at', { ascending: false }).limit(500);
+    if (payload.status)       q = q.eq('status',       payload.status);
+    if (payload.priority)     q = q.eq('priority',     payload.priority);
+    if (payload.assigned_to)  q = q.eq('assigned_to',  payload.assigned_to);
+    if (payload.requested_by) q = q.eq('requested_by', payload.requested_by);
+    const { data, error } = await q;
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, tasks: data || [] };
+  },
+
+  async tasks_create(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    if (!payload.title || !payload.title.trim()) return { ok: false, error: 'Title is required' };
+    const row = {
+      title:        String(payload.title).trim(),
+      description:  String(payload.description || ''),
+      status:       payload.status   || 'open',
+      priority:     payload.priority || 'med',
+      due_date:     payload.due_date || null,
+      requested_by: me.id,
+      assigned_to:  payload.assigned_to || null,
+    };
+    const { data, error } = await sb.from('tasks').insert(row).select('*').single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, task: data };
+  },
+
+  async tasks_update(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const id = payload.id;
+    if (!id) return { ok: false, error: 'Missing task id' };
+    const patch = {};
+    ['title','description','status','priority','due_date','assigned_to'].forEach(k => {
+      if (payload[k] !== undefined) patch[k] = payload[k];
+    });
+    // 'unset due_date' is sent as '' from the frontend; persist as NULL.
+    if (patch.due_date === '') patch.due_date = null;
+    if (patch.assigned_to === '') patch.assigned_to = null;
+    const { error } = await sb.from('tasks').update(patch).eq('id', id);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  },
+
+  async tasks_delete(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
+    const { error } = await sb.from('tasks').delete().eq('id', payload.id);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  },
+
+  async task_comments_list(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const { data, error } = await sb.from('task_comments')
+      .select('*').eq('task_id', payload.task_id)
+      .order('created_at', { ascending: true });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, comments: data || [] };
+  },
+
+  async task_comments_create(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    if (!payload.body || !payload.body.trim()) return { ok: false, error: 'Empty comment' };
+    const { data, error } = await sb.from('task_comments').insert({
+      task_id:   payload.task_id,
+      author_id: me.id,
+      body:      String(payload.body).trim(),
+    }).select('*').single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, comment: data };
+  },
+
   // Self-service "I forgot to clock out" corrective event. Inserts a
   // dir=out event with a custom past timestamp. RLS allows this
   // because events_insert_self matches the caller's own staff_id.
