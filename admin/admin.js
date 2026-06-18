@@ -1296,14 +1296,13 @@ function renderTeam() {
       ${roster.map((s, i) => {
         const rate = s.hourly_rate != null ? `R${Number(s.hourly_rate).toFixed(2)}/hr` : 'No rate set';
         const hrs = s.weekly_hours != null ? `${Number(s.weekly_hours)}h/week` : 'No target';
-        return `<div class="card team-card" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
+        return `<div class="card team-card" data-search="${escapeHtml(((s.name||'') + ' ' + (s.id||'')).toLowerCase())}">
           <div class="top">
             <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px">${initials(s.name)}</div>
             <div style="min-width:0;flex:1">
               <div class="name">${escapeHtml(s.name)}${s.super
                 ? ' <span style="font-size:10px;background:var(--blue);color:#fff;padding:2px 6px;border-radius:6px;vertical-align:middle">SUPER</span>'
                 : (s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : '')}</div>
-              <div class="role">${escapeHtml(s.role || '')}</div>
             </div>
             <button class="btn small" data-edit-staff="${escapeHtml(s.id)}">Edit</button>
           </div>
