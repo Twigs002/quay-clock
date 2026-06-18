@@ -458,15 +458,24 @@ async function submitPin() {
 
 // ───── HEADER (Signal) ───────────────────────────────────────────────
 function renderHeader({ centerLogo, title, sub, greet, date, action } = {}) {
+  // TODO(notifications): The header previously rendered a bell icon with
+  // a yellow dot, but it was never wired to anything and had no source
+  // of notifications (no `notifications` table, no derived signals
+  // surfaced anywhere). Removed to stop shipping dead UI. When we
+  // actually want in-app notifications (e.g. "shift-change approved",
+  // "you forgot to clock out yesterday"), re-add the bell here and
+  // wire a click handler that opens a panel sourced from `requests`
+  // and `events` (or a dedicated `notifications` Supabase table).
+  // The .bell CSS is left in styles.css for that future use.
   const top = centerLogo
     ? `<div class="hdr-top">
          <div style="width:22px"></div>
          <div class="hdr-logo-center"><img src="assets/quay1-logo-white.png" alt="Quay 1"></div>
-         <div class="bell">${icon('bell', 22, 'rgba(255,255,255,0.9)')}<span class="dot"></span></div>
+         <div style="width:22px"></div>
        </div>`
     : `<div class="hdr-top">
          <img class="hdr-logo" src="assets/quay1-logo-white.png" alt="Quay 1">
-         ${action || `<div class="bell">${icon('bell', 22, 'rgba(255,255,255,0.9)')}<span class="dot"></span></div>`}
+         ${action || ''}
        </div>`;
   let body = '';
   if (greet) body = `<div class="hdr-date">${escapeHtml(date)}</div><div class="hdr-greet">${escapeHtml(greet)}</div>`;

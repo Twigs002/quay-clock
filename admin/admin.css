@@ -221,6 +221,18 @@ td .nm .who .r { font-size: 11.5px; font-weight: 500; color: var(--muted); }
 td .pin { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; }
 td.dim { opacity: 0.55; }
 
+/* Expandable REASON cell on the shift-change requests table.
+   Truncates by default, expands inline on click via .details-open. */
+td.reason-cell { max-width: 260px; cursor: pointer; }
+td.reason-cell .reason-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+td.reason-cell.details-open { white-space: normal; max-width: 420px; }
+td.reason-cell.details-open .reason-text {
+  white-space: normal; overflow: visible; text-overflow: clip;
+  line-height: 1.45;
+}
+
 .card-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 14px; }
 .card-head h3 { font-size: 15.5px; font-weight: 800; color: var(--ink); margin: 0; }
 .card-head .live {
@@ -229,6 +241,27 @@ td.dim { opacity: 0.55; }
   padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700;
 }
 .card-head .live .dot { width: 6px; height: 6px; border-radius: 9px; background: var(--green); }
+
+/* "Who's working now" — horizontal scroll wrapper with right-edge fade
+   hint. The fade only shows when the table actually overflows, thanks to
+   the background-attachment: local trick (the white cover scrolls with
+   the content; the fade is fixed to the viewport, so it disappears once
+   the content is fully scrolled into view). */
+.live-now-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background:
+    linear-gradient(to right, #fff 30%, rgba(255,255,255,0)) left center / 40px 100% no-repeat local,
+    radial-gradient(ellipse 40px 60% at right center, rgba(0,0,0,0.12), rgba(0,0,0,0)) right center / 40px 100% no-repeat;
+  background-color: #fff;
+}
+.live-now-table { min-width: 720px; }
+.live-now-table th.live-now-note-col,
+.live-now-table td.live-now-note-col { min-width: 180px; }
+.live-now-note {
+  max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* approval card */
 .appr-row {

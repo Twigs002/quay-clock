@@ -448,27 +448,29 @@ function renderDashboard() {
           </div>
           <button class="btn small" id="dashCsv">${icon('download', 15)} CSV</button>
         </div>
-        <table>
-          <thead><tr>
-            <th>Employee</th><th>Status</th><th>Clock-in</th>
-            <th>Today</th><th>Shift note</th>
-          </tr></thead>
-          <tbody>
-            ${team.length === 0 ? `<tr><td colspan="5" class="muted" style="text-align:center;padding:30px">No staff in the roster yet.</td></tr>` : ''}
-            ${team.map((s, i) => `<tr class="${(s.status === 'off' || s.status === 'leave') ? 'dim' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
-              <td>
-                <div class="nm">
-                  <div class="av" style="background:${avColor(i)};width:34px;height:34px;font-size:12.5px">${initials(s.name)}</div>
-                  <div class="who"><div class="n">${escapeHtml(s.name)}</div><div class="r">${escapeHtml(s.role || '')}</div></div>
-                </div>
-              </td>
-              <td>${tagFor(s.status)}</td>
-              <td class="tnum">${s.cin || '—'}</td>
-              <td class="tnum" style="color:var(--blue);font-weight:800">${fmtHM(s.todayHrs || 0)}</td>
-              <td class="muted" style="max-width:280px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.note || '—')}</div></td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
+        <div class="live-now-wrap">
+          <table class="live-now-table">
+            <thead><tr>
+              <th>Employee</th><th>Status</th><th>Clock-in</th>
+              <th>Today</th><th class="live-now-note-col">Shift note</th>
+            </tr></thead>
+            <tbody>
+              ${team.length === 0 ? `<tr><td colspan="5" class="muted" style="text-align:center;padding:30px">No staff in the roster yet.</td></tr>` : ''}
+              ${team.map((s, i) => `<tr class="${(s.status === 'off' || s.status === 'leave') ? 'dim' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
+                <td>
+                  <div class="nm">
+                    <div class="av" style="background:${avColor(i)};width:34px;height:34px;font-size:12.5px">${initials(s.name)}</div>
+                    <div class="who"><div class="n">${escapeHtml(s.name)}</div><div class="r">${escapeHtml(s.role || '')}</div></div>
+                  </div>
+                </td>
+                <td>${tagFor(s.status)}</td>
+                <td class="tnum">${s.cin || '—'}</td>
+                <td class="tnum" style="color:var(--blue);font-weight:800">${fmtHM(s.todayHrs || 0)}</td>
+                <td class="muted live-now-note-col"><div class="live-now-note">${escapeHtml(s.note || '—')}</div></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="right">
@@ -1249,7 +1251,7 @@ function renderLeave() {
             </td>
             <td>${escapeHtml(fmtDateRange(l.start_date, l.end_date))}</td>
             <td class="tnum" style="font-weight:700">${escapeHtml(t(l.proposed_start) || '—')} – ${escapeHtml(t(l.proposed_end) || '—')}</td>
-            <td class="muted" style="max-width:260px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(l.reason || '—')}</div></td>
+            <td class="muted reason-cell" title="${escapeHtml(l.reason || '')}"><div class="reason-text">${escapeHtml(l.reason || '—')}</div></td>
             <td><span class="pill-st ${escapeHtml(l.status)}">${escapeHtml(l.status)}</span></td>
             <td class="r">
               ${l.status === 'Pending' ? `
@@ -1269,6 +1271,12 @@ function wireLeave() {
     row.querySelectorAll('button[data-act]').forEach(b =>
       b.addEventListener('click', () => decideLeave(id, b.dataset.act))
     );
+  });
+  // Item 16 — let the truncated REASON cell expand inline on click.
+  // Hover already shows the native title-attr tooltip; click toggles
+  // .details-open which drops the nowrap clamp so the row grows.
+  document.querySelectorAll('td.reason-cell').forEach(cell => {
+    cell.addEventListener('click', () => cell.classList.toggle('details-open'));
   });
   const csv = document.getElementById('lvCsv');
   if (csv) csv.addEventListener('click', exportLeaveCSV);
