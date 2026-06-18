@@ -550,9 +550,9 @@ function wireDashboard() {
 }
 
 async function decideLeave(id, status) {
-  if (!state.admin || !state.admin.pin) { state.error = 'Admin session expired — sign in again.'; render(); return; }
+  if (!state.admin) { state.error = 'Admin session expired — sign in again.'; render(); return; }
   try {
-    await api('leave_decide', { id, status, admin_pin: state.admin.pin });
+    await api('leave_decide', { id, status });
     // optimistic update
     (state.data.leave || []).forEach(l => { if (l.id === id) { l.status = status; l.decided_by = state.admin.name; } });
     render();
@@ -1150,7 +1150,6 @@ async function saveEvent(idx, row) {
   const newTs = new Date(newDate + 'T' + newTime + ':00').toISOString();
   try {
     await api('event_update', {
-      admin_pin: state.admin.pin,
       agent_id: e.agentId,
       ts: ev.ts,
       new_ts: newTs,
@@ -1173,7 +1172,7 @@ async function deleteEvent(idx) {
   const ev = e.events[idx];
   if (!confirm('Delete this event? This can\'t be undone.')) return;
   try {
-    await api('event_delete', { admin_pin: state.admin.pin, agent_id: e.agentId, ts: ev.ts });
+    await api('event_delete', { agent_id: e.agentId, ts: ev.ts });
     e.events.splice(idx, 1);
     e.error = '';
     showToast('Deleted');
@@ -1193,7 +1192,7 @@ async function addEvent() {
   if (!date || !time) { e.error = 'Pick a valid date and time'; render(); return; }
   const ts = new Date(date + 'T' + time + ':00').toISOString();
   try {
-    await api('event_add', { admin_pin: state.admin.pin, agent_id: e.agentId, ts, dir: action, note });
+    await api('event_add', { agent_id: e.agentId, ts, dir: action, note });
     e.events.push({ ts, id: e.agentId, name: e.agentName, action, note, duration_hrs: null });
     e.events.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
     e.adding = false; e.error = '';
