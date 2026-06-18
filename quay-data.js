@@ -381,6 +381,31 @@ const handlers = {
     return { ok: true, agent: body.staff };
   },
 
+  async staff_set_pin(payload) {
+    // Goes through the admin-set-pin Edge Function (service-role required to
+    // update an auth.users password). Caller's JWT proves super-ness server-side.
+    const id  = String(payload.id || '').toLowerCase().trim();
+    const pin = String(payload.pin || '').trim();
+    if (!id)  return { ok: false, error: 'Missing id' };
+    if (!/^\d+$/.test(pin) || pin.length < 4) {
+      return { ok: false, error: 'PIN must be 4+ digits' };
+    }
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) return { ok: false, error: 'Not signed in' };
+    const res = await fetch(`${CFG.SUPABASE_URL}/functions/v1/admin-set-pin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': CFG.SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ id, pin }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.ok) return { ok: false, error: body.error || 'Could not reset PIN' };
+    return { ok: true };
+  },
+
   async staff_update(payload) {
     const me = _selfStaff || await loadSelfStaff();
     if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };

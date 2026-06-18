@@ -1416,7 +1416,14 @@ function renderStaffModal() {
             </datalist>
           </label>
         </div>
-        ${isEdit ? '' : `
+        ${isEdit ? (
+          (state.admin && (state.admin.super || state.admin.is_super)) ? `
+          <label class="field"><span>Reset PIN</span>
+            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${escapeHtml(f.pin)}" placeholder="Leave blank to keep current — enter 4 digits to change">
+            <div class="hint">Only fill this in if you want to change ${escapeHtml(f.name || 'their')} login PIN.</div>
+          </label>
+        ` : ''
+        ) : `
           <label class="field"><span>PIN</span>
             <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${escapeHtml(f.pin)}" placeholder="4 digits — they'll use this to log in">
           </label>
@@ -1506,6 +1513,12 @@ async function submitStaffModal() {
         division: f.division || null,
       });
     } else {
+      // Validate optional PIN reset before any writes.
+      const newPin = (f.pin || '').trim();
+      if (newPin && newPin.length !== 4) {
+        f.busy = false; f.error = 'New PIN must be 4 digits (or leave blank to keep current).';
+        render(); return;
+      }
       await api('staff_update', {
         id: f.id,
         name: f.name.trim(),
@@ -1518,6 +1531,9 @@ async function submitStaffModal() {
         designation: f.designation || null,
         division: f.division || null,
       });
+      if (newPin) {
+        await api('staff_set_pin', { id: f.id, pin: newPin });
+      }
     }
     state.staffModal = null;
     await loadAll();
