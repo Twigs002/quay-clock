@@ -37,7 +37,6 @@ const state = {
   tsPeriod: 'this-week', // this-week | last-week | this-month | last-month
   tsLayout: 'grid',      // grid (per-day matrix) | list (flat Connecteam-style shifts)
   tsDetail: null,        // { agentId, agentName } when detail modal open
-  payroll: null,         // { from, to, events: [...] } once fetched
 };
 
 const $root = document.getElementById('admin');
@@ -292,7 +291,6 @@ function renderSidebar() {
   const items = [
     ['dashboard','grid','Dashboard'],
     ['timesheets','clipboard','Timesheets'],
-    ['payroll','chart','Payroll'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
   ];
@@ -323,7 +321,6 @@ function renderTopNav() {
   const items = [
     ['dashboard','grid','Dashboard'],
     ['timesheets','clipboard','Timesheets'],
-    ['payroll','chart','Payroll'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
   ];
@@ -347,7 +344,6 @@ function renderTopNav() {
 const TITLES = {
   dashboard:  ['Dashboard',  'Live overview of your team today'],
   timesheets: ['Timesheets', 'Review & approve hours'],
-  payroll:    ['Payroll',    'Pro-rata pay — hours × rate'],
   leave:      ['Requests',   'Shift-time corrections'],
   team:       ['Team',       'Staff directory & status'],
 };
@@ -402,7 +398,6 @@ function wireShell() {
   if (state.view === 'leave')      wireLeave();
   if (state.view === 'timesheets') wireTimesheets();
   if (state.view === 'team')       wireTeam();
-  if (state.view === 'payroll')    wirePayroll();
   applySearchFilter();
 }
 
@@ -422,7 +417,6 @@ function renderView() {
   switch (state.view) {
     case 'dashboard':  return renderDashboard();
     case 'timesheets': return renderTimesheets();
-    case 'payroll':    return renderPayroll();
     case 'leave':      return renderLeave();
     case 'team':       return renderTeam();
     default:           return '';
@@ -1548,7 +1542,6 @@ function exportCurrent() {
   if (state.view === 'dashboard' || state.view === 'team') exportTeamCSV();
   else if (state.view === 'timesheets') exportTimesheetsCSV();
   else if (state.view === 'leave')      exportLeaveCSV();
-  else if (state.view === 'payroll')    exportPayrollCSV();
 }
 function exportTeamCSV() {
   const team = state.data.team || [];
@@ -1640,147 +1633,6 @@ function statusLabel(s) {
   if (s === 'break') return 'On break';
   if (s === 'leave') return 'On leave';
   return 'Clocked out';
-}
-
-// ───── PAYROLL ──────────────────────────────────────────────────────
-function renderPayroll() {
-  // Default range = current calendar month.
-  if (!state.payroll) {
-    const now = new Date();
-    state.payroll = {
-      from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10),
-      to:   new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().slice(0,10),
-      events: null, loading: false,
-    };
-  }
-  const p = state.payroll;
-  const roster = state.data.roster || [];
-
-  // Aggregate hours per agent for the range from cached events (loaded on demand).
-  const rows = roster.map((s, i) => {
-    const hrs = (p.events || [])
-      .filter(e => e.id === s.id && e.action === 'out' && e.duration_hrs != null)
-      .reduce((acc, e) => acc + Number(e.duration_hrs || 0), 0);
-    const rate = s.hourly_rate != null ? Number(s.hourly_rate) : null;
-    const pay = rate != null ? hrs * rate : null;
-    return { i, s, hrs, rate, pay };
-  });
-  const totalHrs = rows.reduce((acc, r) => acc + r.hrs, 0);
-  const totalPay = rows.reduce((acc, r) => acc + (r.pay || 0), 0);
-  const moneyZA = (v) => v == null ? '—' : 'R' + Number(v).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-  return `
-    <div class="card pad" style="margin-bottom:18px">
-      <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px">
-        <div>
-          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px" title="Pay cycle = 21st of month → 20th of next month">Pay period start</label>
-          <input id="payFrom" type="date" value="${p.from}" style="margin-top:4px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font-family:Montserrat;font-size:14px">
-        </div>
-        <div>
-          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">End</label>
-          <input id="payTo" type="date" value="${p.to}" style="margin-top:4px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font-family:Montserrat;font-size:14px">
-        </div>
-        <button class="btn primary" id="payCalc" ${p.loading ? 'disabled' : ''}>${p.loading ? 'Loading…' : 'Calculate'}</button>
-        <button class="btn small" id="payCsv">${icon('download', 15)} Export CSV</button>
-        <div class="seg-pills" style="margin-left:auto">
-          <button class="seg-btn" data-pay-preset="this-week">This Week</button>
-          <button class="seg-btn" data-pay-preset="last-week">Last Week</button>
-          <button class="seg-btn" data-pay-preset="this-cycle">This Cycle</button>
-          <button class="seg-btn" data-pay-preset="last-cycle">Last Cycle</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="card" style="overflow:hidden">
-      <div class="card-head">
-        <h3>Pro-rata pay · ${escapeHtml(p.from)} → ${escapeHtml(p.to)}</h3>
-        <span class="muted" style="font-size:13px">${rows.length} staff · ${fmtHM(totalHrs)} total · <b style="color:var(--ink)">${moneyZA(totalPay)}</b></span>
-      </div>
-      ${p.events == null ? `<div class="muted" style="padding:30px;text-align:center">Pick a range and click <b>Calculate</b>.</div>` : `
-        <table>
-          <thead><tr>
-            <th>Employee</th>
-            <th class="ctr">Hours</th>
-            <th class="ctr">Rate</th>
-            <th class="ctr">Contracted</th>
-            <th class="r">Pay</th>
-          </tr></thead>
-          <tbody>
-            ${rows.length === 0 ? `<tr><td colspan="5" class="muted" style="text-align:center;padding:30px">No staff in the roster.</td></tr>` : ''}
-            ${rows.map(r => `<tr data-search="${escapeHtml(((r.s.name||'') + ' ' + (r.s.role||'') + ' ' + r.s.id).toLowerCase())}">
-              <td>
-                <div class="nm">
-                  <div class="av" style="background:${avColor(r.i)};width:32px;height:32px;font-size:12px">${initials(r.s.name)}</div>
-                  <div class="who"><div class="n">${escapeHtml(r.s.name)}</div><div class="r">${escapeHtml(r.s.role || '')}</div></div>
-                </div>
-              </td>
-              <td class="ctr tnum" style="font-weight:700;color:var(--blue)">${fmtHM(r.hrs)}</td>
-              <td class="ctr tnum">${r.rate == null ? '<span class="muted">—</span>' : moneyZA(r.rate) + '/hr'}</td>
-              <td class="ctr tnum">${r.s.weekly_hours != null ? Number(r.s.weekly_hours) + 'h/wk' : '<span class="muted">—</span>'}</td>
-              <td class="r tnum" style="font-weight:800;${r.pay != null ? 'color:var(--ink)' : ''}">${moneyZA(r.pay)}</td>
-            </tr>`).join('')}
-          </tbody>
-          <tfoot>
-            <tr style="background:var(--paper);font-weight:800">
-              <td>Total</td>
-              <td class="ctr tnum" style="color:var(--blue)">${fmtHM(totalHrs)}</td>
-              <td></td><td></td>
-              <td class="r tnum" style="font-size:15px;color:var(--ink)">${moneyZA(totalPay)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      `}
-    </div>
-  `;
-}
-
-function wirePayroll() {
-  const p = state.payroll;
-  const fromEl = document.getElementById('payFrom');
-  const toEl   = document.getElementById('payTo');
-  if (fromEl) fromEl.addEventListener('change', () => { p.from = fromEl.value; });
-  if (toEl)   toEl.addEventListener('change',   () => { p.to   = toEl.value; });
-
-  document.querySelectorAll('[data-pay-preset]').forEach(b => b.addEventListener('click', () => {
-    const r = periodRange(b.dataset.payPreset);
-    p.from = r.from.toISOString().slice(0, 10);
-    p.to   = r.to.toISOString().slice(0, 10);
-    runPayrollCalc();
-  }));
-  const calc = document.getElementById('payCalc');
-  if (calc) calc.addEventListener('click', runPayrollCalc);
-
-  const csv = document.getElementById('payCsv');
-  if (csv) csv.addEventListener('click', exportPayrollCSV);
-}
-
-async function runPayrollCalc() {
-  const p = state.payroll;
-  p.loading = true; render();
-  try {
-    const fromIso = new Date(p.from + 'T00:00:00Z').toISOString();
-    const toIso   = new Date(p.to   + 'T23:59:59Z').toISOString();
-    const data = await api('events', { from: fromIso, to: toIso });
-    p.events = data.events || [];
-  } catch (e) {
-    state.error = e.message; p.events = [];
-  }
-  p.loading = false; render();
-}
-
-function exportPayrollCSV() {
-  const p = state.payroll; if (!p || !p.events) { runPayrollCalc(); return; }
-  const roster = state.data.roster || [];
-  const rows = [['Employee', 'Username', 'Role', 'Hours', 'Hourly rate', 'Pay (R)', 'Period start', 'Period end']];
-  roster.forEach(s => {
-    const hrs = (p.events || [])
-      .filter(e => e.id === s.id && e.action === 'out' && e.duration_hrs != null)
-      .reduce((acc, e) => acc + Number(e.duration_hrs || 0), 0);
-    const rate = s.hourly_rate != null ? Number(s.hourly_rate) : null;
-    const pay = rate != null ? (hrs * rate).toFixed(2) : '';
-    rows.push([s.name, s.id, s.role || '', hrs.toFixed(2), rate != null ? rate.toFixed(2) : '', pay, p.from, p.to]);
-  });
-  downloadCSV(`payroll-${p.from}-to-${p.to}.csv`, rows);
 }
 
 // ───── GATE (Admin sign-in: username + PIN) ──────────────────────────
