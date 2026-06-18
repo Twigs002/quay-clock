@@ -1050,15 +1050,30 @@ function wkLabel(start, end) {
 // ── Event editor (admin manual clock-in/out edits) ──────────────────
 function openEventEditor(agentId, agentName) {
   const sow = startOfWeek(new Date());
-  const events = (state.data.weekEvents || [])
+  // Use the period-aware events cache (tsEvents) when it's been loaded —
+  // that's what the Timesheets table is showing. Falls back to the
+  // weekEvents cache for the default this-week landing case. Without this
+  // the editor only ever sees the current week, so admins can't edit
+  // events for last-cycle / last-week / custom ranges.
+  const sourceEvents = (state.data.tsEvents && state.data.tsEvents.length)
+    ? state.data.tsEvents
+    : (state.data.weekEvents || []);
+  const events = sourceEvents
     .filter(e => e.id === agentId)
     .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  // Default "add new event" date to the most-recent event's date for this
+  // agent (or today if no events) — so adding an event for a past cycle
+  // doesn't silently default to today.
+  const lastTs = events.length ? events[events.length - 1].ts : null;
+  const defaultDate = lastTs
+    ? new Date(lastTs).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
   state.eventEditor = {
     agentId, agentName,
     weekStart: sow,
     events: events.slice(),
     busy: false, error: '', adding: false,
-    addDraft: { action: 'in', date: new Date().toISOString().slice(0,10), time: '08:00', note: '' },
+    addDraft: { action: 'in', date: defaultDate, time: '08:00', note: '' },
   };
   render();
 }
