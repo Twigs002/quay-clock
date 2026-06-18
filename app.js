@@ -40,7 +40,14 @@ async function boot() {
   try {
     const staff = window.QD ? await window.QD.loadSelfStaff() : null;
     if (staff && staff.active !== false) {
-      state.agent = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: !!staff.is_admin };
+      state.agent = {
+        id: staff.id, name: staff.name,
+        role: staff.role || '', team: staff.team || '',
+        admin: !!staff.is_admin,
+        super: !!staff.is_super,
+        designation: staff.designation || '',
+        division: staff.division || '',
+      };
       writeStored(state.agent);
       state.tab = (location.hash || '#home').slice(1) || 'home';
       loadTab(state.tab);
