@@ -59,7 +59,7 @@ async function boot() {
         });
         const staff = await window.QD.loadSelfStaff();
         if (staff && staff.is_admin) {
-          state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true };
+          state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true, super: !!staff.is_super, is_super: !!staff.is_super };
           writeSession(state.admin);
           await loadAll();
           render();
@@ -74,7 +74,7 @@ async function boot() {
   try {
     const staff = window.QD ? await window.QD.loadSelfStaff() : null;
     if (staff && staff.is_admin) {
-      state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true };
+      state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true, super: !!staff.is_super, is_super: !!staff.is_super };
       writeSession(state.admin);
       loadAll();
     }
