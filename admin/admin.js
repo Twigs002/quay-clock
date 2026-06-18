@@ -1470,7 +1470,18 @@ function wireStaffModal() {
   rate.addEventListener('input',  () => { f.hourly_rate  = rate.value; });
   hours.addEventListener('input', () => { f.weekly_hours = hours.value; });
   const desig = document.getElementById('sfDesignation');
-  if (desig) desig.addEventListener('change', () => { f.designation = desig.value; });
+  if (desig) desig.addEventListener('change', () => {
+    f.designation = desig.value;
+    // Auto-sync Admin + Super to match the role so demoting someone via
+    // the designation dropdown (e.g. 'super_admin' → 'fancy') also clears
+    // their old super/admin flags.
+    const isSuper = f.designation === 'super_admin';
+    const isAdmin = isSuper || f.designation === 'manager';
+    f.super = isSuper;
+    f.admin = isAdmin;
+    if (adm) adm.checked = isAdmin;
+    if (sup) sup.checked = isSuper;
+  });
   const division = document.getElementById('sfDivision');
   if (division) division.addEventListener('input', () => { f.division = division.value; });
   if (pin) pin.addEventListener('input', () => { f.pin = pin.value.replace(/[^0-9]/g, '').slice(0, 4); pin.value = f.pin; });
