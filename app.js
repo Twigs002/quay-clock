@@ -575,18 +575,36 @@ const CLOCK_CAMPAIGNS = [
   'Weasels', 'Wizards', 'Wolves', 'Wombats',
 ];
 
+// Split a saved note ("Ballers & Targaryens", "Spartans, Tigers", etc.)
+// back into individual campaign names for the multi-select preselect.
+// Mirrors the payroll algorithm's splitter so what people pick survives
+// the round-trip.
+function _splitNote(s) {
+  return String(s || '')
+    .split(/\s*(?:\/|&|,|\band\b)\s*/i)
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
 function openNoteSheet(direction = 'in') {
   // direction = 'in' | 'out' — which clock action follows submission.
-  // Tier 1 #1 — preselect whatever they picked last time so the common
-  // case is tap → confirm (not search → tap → confirm).
+  // Preselect whatever they picked last time so the common case is
+  // tap → confirm. Multi-select now: any of the prior note's parts
+  // that match the current canonical list comes pre-ticked.
   const lastNote = (state.home && state.home.lastNote) || '';
-  const preselect = CLOCK_CAMPAIGNS.includes(lastNote) ? lastNote : '';
+  const preselect = _splitNote(lastNote).filter(c => CLOCK_CAMPAIGNS.includes(c));
   state.sheet = { type: 'note', value: preselect, filter: '', direction };
   render();
 }
 
 async function submitClock(action) {
-  const note = state.sheet && state.sheet.value ? state.sheet.value.trim() : (state.home && state.home.lastNote) || '';
+  // Multi-select now: value is an array. Join with ' & ' which the
+  // payroll algorithm already splits on (spec §4.1), so hours auto-
+  // split evenly across each picked team.
+  const picks = (state.sheet && Array.isArray(state.sheet.value)) ? state.sheet.value : [];
+  const note = picks.length
+    ? picks.map(s => s.trim()).filter(Boolean).join(' & ')
+    : (state.home && state.home.lastNote) || '';
   // Mark sheet busy; update CTA in place so we don't lose textarea focus mid-flow.
   if (state.sheet) {
     state.sheet.busy = true;
@@ -867,7 +885,8 @@ function renderSheet() {
 }
 
 function renderNoteSheet() {
-  const v = state.sheet.value || '';
+  const v = Array.isArray(state.sheet.value) ? state.sheet.value : []
+  const picked = new Set(v)
   const filter = (state.sheet.filter || '').trim().toLowerCase();
   const dir = state.sheet.direction || 'in';
   const err = state.sheet.error || '';
@@ -876,12 +895,24 @@ function renderNoteSheet() {
   const items = filter
     ? CLOCK_CAMPAIGNS.filter(c => c.toLowerCase().includes(filter))
     : CLOCK_CAMPAIGNS;
-  const ok = !!v;
+  const ok = v.length > 0;
   const ctaLabel = busy
     ? (goingIn ? 'Clocking in…' : 'Clocking out…')
     : (ok
-        ? (goingIn ? 'CONFIRM & CLOCK IN' : 'CONFIRM & CLOCK OUT')
-        : 'Pick a campaign to continue');
+        ? (goingIn
+            ? `CONFIRM & CLOCK IN${v.length > 1 ? ` · ${v.length} TEAMS` : ''}`
+            : `CONFIRM & CLOCK OUT${v.length > 1 ? ` · ${v.length} TEAMS` : ''}`)
+        : 'Pick at least one campaign to continue');
+  // Hours-split hint when multiple teams are picked. Mirrors spec §4.4.
+  const splitHint = v.length > 1
+    ? `<div class="picker-hint" style="font-size:11.5px;color:var(--muted);margin-top:4px">Your shift hours will split evenly across these ${v.length} teams.</div>`
+    : '';
+  const selectedChips = v.length
+    ? `<div class="picker-selected" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+         <span style="font-size:12px;color:var(--muted);font-weight:700">SELECTED · ${v.length}</span>
+         ${v.map(c => `<button class="picker-chip" data-unpick="${escapeHtml(c)}" style="background:var(--blue-tint,#E7EEF4);color:var(--blue);border:1px solid var(--blue);font-size:12px;font-weight:700;padding:3px 9px;border-radius:14px;display:inline-flex;align-items:center;gap:5px">${escapeHtml(c)}<span aria-hidden="true">×</span></button>`).join('')}
+       </div>${splitHint}`
+    : '';
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
     <div class="sheet sheet-picker">
@@ -890,16 +921,16 @@ function renderNoteSheet() {
         ${icon('clipboard', 22, 'var(--blue)')}
         <div>
           <h2>What are you working on?</h2>
-          <div class="req">Required · pick from the list below</div>
+          <div class="req">Required · tap one or more — hours split evenly</div>
         </div>
       </div>
       <input id="sheetSearch" class="picker-search" type="search"
              placeholder="Search campaigns…" value="${escapeHtml(state.sheet.filter || '')}" autocomplete="off">
       <div class="picker-list" id="pickerList">
         ${items.length === 0 ? '<div class="picker-empty">No match</div>' :
-          items.map(c => `<button class="picker-item ${v === c ? 'on' : ''}" data-pick="${escapeHtml(c)}">${escapeHtml(c)}${v === c ? ' ✓' : ''}</button>`).join('')}
+          items.map(c => `<button class="picker-item ${picked.has(c) ? 'on' : ''}" data-pick="${escapeHtml(c)}">${escapeHtml(c)}${picked.has(c) ? ' ✓' : ''}</button>`).join('')}
       </div>
-      ${v ? `<div class="picker-selected">Selected: <b>${escapeHtml(v)}</b></div>` : ''}
+      ${selectedChips}
       <div id="sheetErr" class="banner" style="${err ? '' : 'display:none'};margin-top:10px;margin-bottom:0">${escapeHtml(err)}</div>
       <button class="btn-cta ${ok && !busy ? (goingIn ? 'ok' : 'red') : 'disabled'}" id="sheetGo">${ctaLabel}</button>
     </div>
@@ -973,38 +1004,86 @@ function wireSheet() {
     if (search) setTimeout(() => { try { search.focus(); } catch {} }, 0);
     // Re-filter the list on every keystroke without nuking the whole sheet
     // (preserves search input focus + scroll position).
+    const _picked = () => new Set(Array.isArray(state.sheet.value) ? state.sheet.value : []);
     if (search) search.addEventListener('input', () => {
       state.sheet.filter = search.value;
       const f = search.value.trim().toLowerCase();
       const items = f ? CLOCK_CAMPAIGNS.filter(c => c.toLowerCase().includes(f)) : CLOCK_CAMPAIGNS;
       if (!list) return;
+      const p = _picked();
       list.innerHTML = items.length === 0
         ? '<div class="picker-empty">No match</div>'
-        : items.map(c => `<button class="picker-item ${state.sheet.value === c ? 'on' : ''}" data-pick="${escapeHtml(c)}">${escapeHtml(c)}${state.sheet.value === c ? ' ✓' : ''}</button>`).join('');
+        : items.map(c => `<button class="picker-item ${p.has(c) ? 'on' : ''}" data-pick="${escapeHtml(c)}">${escapeHtml(c)}${p.has(c) ? ' ✓' : ''}</button>`).join('');
       bindPickerItems();
     });
+    // Re-render only the lower half of the sheet (selected chips + CTA)
+    // after every toggle, without nuking the search box / scroll position.
+    const refreshSelectedAndCTA = () => {
+      const v = Array.isArray(state.sheet.value) ? state.sheet.value : [];
+      const ok = v.length > 0;
+      const sel = document.querySelector('.picker-selected');
+      if (sel) {
+        if (!v.length) {
+          sel.outerHTML = '';
+        } else {
+          sel.outerHTML = `<div class="picker-selected" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+            <span style="font-size:12px;color:var(--muted);font-weight:700">SELECTED · ${v.length}</span>
+            ${v.map(c => `<button class="picker-chip" data-unpick="${escapeHtml(c)}" style="background:var(--blue-tint,#E7EEF4);color:var(--blue);border:1px solid var(--blue);font-size:12px;font-weight:700;padding:3px 9px;border-radius:14px;display:inline-flex;align-items:center;gap:5px">${escapeHtml(c)}<span aria-hidden="true">×</span></button>`).join('')}
+          </div>${v.length > 1 ? `<div class="picker-hint" style="font-size:11.5px;color:var(--muted);margin-top:4px">Your shift hours will split evenly across these ${v.length} teams.</div>` : ''}`;
+        }
+      } else if (ok) {
+        // Inject if it wasn't in the DOM yet.
+        const beforeErr = document.getElementById('sheetErr');
+        if (beforeErr && beforeErr.parentNode) {
+          const wrap = document.createElement('div');
+          wrap.innerHTML = `<div class="picker-selected" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+            <span style="font-size:12px;color:var(--muted);font-weight:700">SELECTED · ${v.length}</span>
+            ${v.map(c => `<button class="picker-chip" data-unpick="${escapeHtml(c)}" style="background:var(--blue-tint,#E7EEF4);color:var(--blue);border:1px solid var(--blue);font-size:12px;font-weight:700;padding:3px 9px;border-radius:14px;display:inline-flex;align-items:center;gap:5px">${escapeHtml(c)}<span aria-hidden="true">×</span></button>`).join('')}
+          </div>`;
+          beforeErr.parentNode.insertBefore(wrap.firstChild, beforeErr);
+        }
+      }
+      if (go) {
+        go.classList.toggle('disabled', !ok);
+        go.classList.toggle('ok',  ok && dir === 'in');
+        go.classList.toggle('red', ok && dir !== 'in');
+        const goingIn = dir === 'in';
+        go.innerHTML = ok
+          ? (goingIn
+              ? `CONFIRM &amp; CLOCK IN${v.length > 1 ? ` · ${v.length} TEAMS` : ''}`
+              : `CONFIRM &amp; CLOCK OUT${v.length > 1 ? ` · ${v.length} TEAMS` : ''}`)
+          : 'Pick at least one campaign to continue';
+      }
+      // Re-bind chip remove handlers.
+      document.querySelectorAll('.picker-chip[data-unpick]').forEach(ch => {
+        ch.addEventListener('click', () => {
+          const c = ch.dataset.unpick;
+          state.sheet.value = (state.sheet.value || []).filter(x => x !== c);
+          // Mirror the toggle in the main list.
+          document.querySelectorAll(`.picker-item[data-pick="${c.replace(/"/g, '\\"')}"]`).forEach(it => {
+            it.classList.remove('on');
+            it.textContent = c;
+          });
+          refreshSelectedAndCTA();
+        });
+      });
+    };
     const bindPickerItems = () => {
       document.querySelectorAll('.picker-item').forEach(b => {
         b.addEventListener('click', () => {
           const v = b.dataset.pick;
-          state.sheet.value = v;
-          // Update UI in-place — don't re-render the whole sheet.
-          document.querySelectorAll('.picker-item').forEach(x => {
-            const on = x.dataset.pick === v;
-            x.classList.toggle('on', on);
-            x.textContent = x.dataset.pick + (on ? ' ✓' : '');
-          });
-          const sel = document.querySelector('.picker-selected');
-          if (sel) sel.innerHTML = `Selected: <b>${escapeHtml(v)}</b>`;
-          if (go) {
-            go.classList.remove('disabled');
-            go.classList.add(dir === 'in' ? 'ok' : 'red');
-            go.innerHTML = (dir === 'in' ? 'CONFIRM &amp; CLOCK IN' : 'CONFIRM &amp; CLOCK OUT');
-          }
+          const cur = Array.isArray(state.sheet.value) ? state.sheet.value : [];
+          const isOn = cur.includes(v);
+          state.sheet.value = isOn ? cur.filter(x => x !== v) : [...cur, v];
+          // Toggle just this item visually — leave the rest alone.
+          b.classList.toggle('on', !isOn);
+          b.textContent = v + (!isOn ? ' ✓' : '');
+          refreshSelectedAndCTA();
         });
       });
     };
     bindPickerItems();
+    refreshSelectedAndCTA();
     if (go) go.addEventListener('click', () => {
       if (state.sheet.busy) return;
       if (!state.sheet.value || !state.sheet.value.trim()) return;
