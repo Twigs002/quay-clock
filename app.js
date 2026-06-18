@@ -172,6 +172,18 @@ function icon(name, size = 22, stroke = 'currentColor', sw = 1.8) {
 // ───── DATA LOADERS ──────────────────────────────────────────────────
 async function loadTab(tab) {
   if (!state.agent) return;
+  // Bounce non-admin/manager users away from #team — even via deep link.
+  if (tab === 'team') {
+    const a = state.agent;
+    const d = String(a.designation || '').toLowerCase();
+    const ok = a.admin || a.super || a.is_admin || a.is_super
+            || d === 'super_admin' || d === 'manager';
+    if (!ok) {
+      state.tab = 'home';
+      try { location.hash = '#home'; } catch {}
+      return loadTab('home');
+    }
+  }
   state.loading = true;
   state.error = null;
   render();
@@ -364,12 +376,22 @@ function render() {
 }
 
 function renderTabBar() {
+  // Team tab is admin/manager-only — regular staff (fancy / ln / assistant /
+  // rm) shouldn't see the floor roster from inside their personal PWA.
+  // Mirrors the dashboard's gating pattern (admin OR super OR designation
+  // in {super_admin, manager}).
+  const _isAdminOrManager = (() => {
+    const a = state.agent || {};
+    if (a.admin || a.super || a.is_admin || a.is_super) return true;
+    const d = String(a.designation || '').toLowerCase();
+    return d === 'super_admin' || d === 'manager';
+  })();
   const tabs = [
     ['home','Home','home'],
     ['timesheet','Timesheet','clipboard'],
     ['leave','Requests','calendar'],
-    ['team','Team','users'],
   ];
+  if (_isAdminOrManager) tabs.push(['team','Team','users']);
   return `<div class="tabbar">
     ${tabs.map(([k, label, ic]) => `
       <button class="tab ${k === state.tab ? 'on' : ''}" data-tab="${k}">
