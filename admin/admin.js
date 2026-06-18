@@ -1048,34 +1048,61 @@ function wkLabel(start, end) {
 }
 
 // ── Event editor (admin manual clock-in/out edits) ──────────────────
-function openEventEditor(agentId, agentName) {
+async function openEventEditor(agentId, agentName) {
   const sow = startOfWeek(new Date());
-  // Use the period-aware events cache (tsEvents) when it's been loaded —
-  // that's what the Timesheets table is showing. Falls back to the
-  // weekEvents cache for the default this-week landing case. Without this
-  // the editor only ever sees the current week, so admins can't edit
-  // events for last-cycle / last-week / custom ranges.
+  // Seed with whatever's in the period-aware cache so the editor opens
+  // instantly with what we already have. Then fetch the agent's FULL
+  // history in the background (up to 12 months) so admins can edit any
+  // shift from any cycle without being limited to the table's filter.
   const sourceEvents = (state.data.tsEvents && state.data.tsEvents.length)
     ? state.data.tsEvents
     : (state.data.weekEvents || []);
-  const events = sourceEvents
+  const seed = sourceEvents
     .filter(e => e.id === agentId)
     .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
-  // Default "add new event" date to the most-recent event's date for this
-  // agent (or today if no events) — so adding an event for a past cycle
-  // doesn't silently default to today.
-  const lastTs = events.length ? events[events.length - 1].ts : null;
-  const defaultDate = lastTs
-    ? new Date(lastTs).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
   state.eventEditor = {
     agentId, agentName,
     weekStart: sow,
-    events: events.slice(),
-    busy: false, error: '', adding: false,
-    addDraft: { action: 'in', date: defaultDate, time: '08:00', note: '' },
+    events: seed.slice(),
+    busy: false, error: '', adding: false, loadingHistory: true,
+    addDraft: { action: 'in',
+                date: seed.length
+                  ? new Date(seed[seed.length - 1].ts).toISOString().slice(0, 10)
+                  : new Date().toISOString().slice(0, 10),
+                time: '08:00', note: '' },
   };
   render();
+  // Background fetch — agent's full history. 12 months is plenty for
+  // any realistic correction; bump if anyone genuinely needs older.
+  try {
+    const to = new Date();
+    const from = new Date(to.getFullYear(), to.getMonth() - 12, 1);
+    const res = await api('events', {
+      agent_id: agentId,
+      from: from.toISOString(),
+      to: to.toISOString(),
+    });
+    const all = (res && res.events) || [];
+    // Editor may have been closed by the time the fetch resolves —
+    // bail out gracefully.
+    if (!state.eventEditor || state.eventEditor.agentId !== agentId) return;
+    state.eventEditor.events = all
+      .slice()
+      .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    state.eventEditor.loadingHistory = false;
+    // Re-seed the add-event default date to the agent's most recent event
+    // in the now-complete history.
+    if (all.length) {
+      state.eventEditor.addDraft.date =
+        new Date(all[all.length - 1].ts).toISOString().slice(0, 10);
+    }
+    render();
+  } catch (e) {
+    if (!state.eventEditor || state.eventEditor.agentId !== agentId) return;
+    state.eventEditor.loadingHistory = false;
+    state.eventEditor.error = 'Could not load full history: ' + String(e.message || e);
+    render();
+  }
 }
 
 function renderEventEditor() {
@@ -1117,9 +1144,11 @@ function renderEventEditor() {
       </div>
       <div class="modal-body">
         <div class="ev-help">
-          Manually adjust this week's clock events. Pair each IN with an OUT for the duration to count.
+          Manually adjust this agent's clock events across any cycle.
+          Pair each IN with an OUT for the duration to count.
+          ${e.loadingHistory ? `<span class="muted" style="margin-left:6px">· Loading full history…</span>` : ''}
         </div>
-        ${e.events.length === 0 ? `<div class="muted" style="font-size:13px;padding:6px 0">No events this week.</div>` : ''}
+        ${e.events.length === 0 ? `<div class="muted" style="font-size:13px;padding:6px 0">${e.loadingHistory ? 'Loading events for this agent…' : 'No events found for this agent.'}</div>` : ''}
         ${items}
         ${e.error ? `<div class="banner">${escapeHtml(e.error)}</div>` : ''}
         <div style="margin-top:6px">${addBlock}</div>
