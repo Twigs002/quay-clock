@@ -131,7 +131,12 @@ const handlers = {
   },
 
   async me(payload) {
-    const id = String(payload.agent_id || '').toLowerCase();
+    // PRIVACY (#29): non-admins can only fetch their own 'me' payload.
+    // Admins keep cross-staff lookups (used by admin tooling).
+    const meStaff = _selfStaff || await loadSelfStaff();
+    if (!meStaff) return { ok: false, error: 'Not signed in' };
+    const requested = String(payload.agent_id || '').toLowerCase();
+    const id = meStaff.is_admin ? (requested || meStaff.id) : meStaff.id;
     if (!id) return { ok: false, error: 'Missing agent_id' };
     const { data: staff, error: sErr } = await sb.from('staff').select('*').eq('id', id).maybeSingle();
     if (sErr) return { ok: false, error: sErr.message };
@@ -180,12 +185,24 @@ const handlers = {
   },
 
   async events(payload) {
+    // PRIVACY (#29): non-admins see only their own staff_id rows.
+    // We silently coerce payload.agent_id to the caller's own id rather
+    // than rejecting — admins keep cross-staff visibility for the
+    // admin dashboard (admin.js calls this with no agent_id to load
+    // the whole roster's week). Gate on me.is_admin, NOT on whether
+    // the client supplied agent_id, so a malicious client can't ask
+    // for someone else's data by setting agent_id explicitly.
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
     const w = payload.from || startOfWeek(new Date()).toISOString();
     const e = payload.to   || endOfWeek(new Date()).toISOString();
     let q = sb.from('events')
       .select('id, ts, staff_id, dir, note, duration_hrs, staff:staff_id(name)')
       .gte('ts', w).lte('ts', e).order('ts', { ascending: true });
-    if (payload.agent_id) q = q.eq('staff_id', String(payload.agent_id).toLowerCase());
+    const effectiveAgentId = me.is_admin
+      ? (payload.agent_id ? String(payload.agent_id).toLowerCase() : null)
+      : me.id; // non-admins are pinned to themselves regardless of payload
+    if (effectiveAgentId) q = q.eq('staff_id', effectiveAgentId);
     const { data, error } = await q;
     if (error) return { ok: false, error: error.message };
     const events = (data || []).map((r) => ({
@@ -201,6 +218,9 @@ const handlers = {
   },
 
   async summary(payload) {
+    // PRIVACY (#29): inherits the events-handler gate above — non-admins
+    // only ever sum hours for their own staff_id rows. Admins see the
+    // full roster summary.
     const { ok, events, error } = await this.events(payload);
     if (!ok) return { ok, error };
     const by = new Map();
@@ -216,10 +236,17 @@ const handlers = {
   },
 
   async roster() {
-    const { data, error } = await sb.from('staff')
-      .select('*')
-      .eq('active', true)
-      .order('name', { ascending: true });
+    // PRIVACY (#29): roster (with everyone's live status) is admin/manager-
+    // only. Non-admins calling this directly get only their own row so
+    // the Team tab can't be used as an end-run around the events gate.
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const isManager = !!me.is_admin || !!me.is_super
+      || String(me.designation || '').toLowerCase() === 'manager'
+      || String(me.designation || '').toLowerCase() === 'super_admin';
+    let baseQ = sb.from('staff').select('*').eq('active', true);
+    if (!isManager) baseQ = baseQ.eq('id', me.id);
+    const { data, error } = await baseQ.order('name', { ascending: true });
     if (error) return { ok: false, error: error.message };
     // Decorate each row with its current status (one query per agent — fine
     // for a small office; the table itself returned fast).
@@ -245,12 +272,23 @@ const handlers = {
   },
 
   async team_today() {
+    // PRIVACY (#29): mirrors the roster gate above. Non-admins/non-managers
+    // get a 1-row "team" containing only themselves; today's-events query
+    // is scoped to their staff_id so we never serve another staffer's
+    // status/hours to a non-admin call.
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const isManager = !!me.is_admin || !!me.is_super
+      || String(me.designation || '').toLowerCase() === 'manager'
+      || String(me.designation || '').toLowerCase() === 'super_admin';
     const r = await this.roster();
     if (!r.ok) return r;
     const tRange = todayRange();
-    const { data: todayEvents, error } = await sb.from('events')
+    let evQ = sb.from('events')
       .select('staff_id, dir, duration_hrs, ts')
       .gte('ts', tRange.from).lte('ts', tRange.to);
+    if (!isManager) evQ = evQ.eq('staff_id', me.id);
+    const { data: todayEvents, error } = await evQ;
     if (error) return { ok: false, error: error.message };
     const hrsBy = {};
     (todayEvents || []).forEach((e) => {
@@ -274,8 +312,16 @@ const handlers = {
   },
 
   async leave_list(payload) {
+    // PRIVACY (#29): non-admins only ever see their own shift-change /
+    // leave requests. Admins keep cross-staff visibility for the
+    // admin dashboard's approval queue.
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
     let q = sb.from('requests').select('*').order('created_at', { ascending: false });
-    if (payload.agent_id) q = q.eq('staff_id', String(payload.agent_id).toLowerCase());
+    const effectiveAgentId = me.is_admin
+      ? (payload.agent_id ? String(payload.agent_id).toLowerCase() : null)
+      : me.id;
+    if (effectiveAgentId) q = q.eq('staff_id', effectiveAgentId);
     const { data, error } = await q;
     if (error) return { ok: false, error: error.message };
     // Decorate with agent_name (cheap join via roster cache).

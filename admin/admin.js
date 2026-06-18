@@ -605,12 +605,24 @@ function renderTimesheets() {
     </div>
   ` : '';
 
+  // #30 — small staff-name filter input at the top of the Timesheets table
+  // for admins (alongside the existing global topbar search). Wires into
+  // state.search so applySearchFilter() filters the rows in place.
+  const tsSearchInput = `
+    <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:#fff">
+      ${icon('search', 14, 'var(--muted)')}
+      <input id="tsLocalSearch" type="text" placeholder="Filter staff…"
+             value="${escapeHtml(state.search || '')}"
+             style="border:0;outline:0;font-family:Montserrat;font-size:13px;padding:2px 0;background:transparent;min-width:160px">
+    </div>`;
+
   const header = `<div class="card-head" style="flex-wrap:wrap;gap:10px">
     <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;flex-direction:column">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <h3>${escapeHtml(periodLabel(period, range))}</h3>
         <div class="seg-pills" role="tablist">${periodChips}</div>
         <div class="seg-pills" role="tablist" style="margin-left:4px">${layoutChips}</div>
+        ${tsSearchInput}
       </div>
       ${customInputs}
     </div>
@@ -865,6 +877,17 @@ function wireTimesheets() {
   if (cf) cf.addEventListener('input', e => { state.tsCustomFrom = e.target.value; });
   if (ct) ct.addEventListener('input', e => { state.tsCustomTo   = e.target.value; });
   if (ca) ca.addEventListener('click', () => loadTsEvents('custom'));
+  // #30 — local Timesheet filter mirrors the topbar search so admins can
+  // narrow the roster to a specific staff member directly above the table.
+  const localSearch = document.getElementById('tsLocalSearch');
+  if (localSearch) {
+    localSearch.addEventListener('input', e => {
+      state.search = e.target.value;
+      const top = document.getElementById('adminSearch');
+      if (top) top.value = e.target.value;
+      applySearchFilter();
+    });
+  }
   document.querySelectorAll('button[data-edit-events]').forEach(b => b.addEventListener('click', () => {
     openEventEditor(b.dataset.editEvents, b.dataset.name);
   }));

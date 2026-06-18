@@ -415,7 +415,10 @@ function renderLogin() {
   return `<div class="login ${state.pinErr ? 'pin-error' : ''}">
     <div class="top">
       <img src="assets/quay1-logo-white.png" alt="Quay 1">
-      <div class="tag">clock-in &amp; time tracking</div>
+      <div class="tag tag-stack">
+        <span class="tag-line tag-white">CLOCK-IN +</span>
+        <span class="tag-line tag-yellow">TIME TRACKING</span>
+      </div>
     </div>
     <div class="pin-area">
       <h2>Sign in</h2>
@@ -479,7 +482,7 @@ async function submitPin() {
 }
 
 // ───── HEADER (Signal) ───────────────────────────────────────────────
-function renderHeader({ centerLogo, title, sub, greet, date, action } = {}) {
+function renderHeader({ centerLogo, title, sub, greet, date, action, page } = {}) {
   // TODO(notifications): The header previously rendered a bell icon with
   // a yellow dot, but it was never wired to anything and had no source
   // of notifications (no `notifications` table, no derived signals
@@ -500,9 +503,12 @@ function renderHeader({ centerLogo, title, sub, greet, date, action } = {}) {
          ${action || ''}
        </div>`;
   let body = '';
-  if (greet) body = `<div class="hdr-date">${escapeHtml(date)}</div><div class="hdr-greet">${escapeHtml(greet)}</div>`;
+  // #24 — Home greeting now leads (large), date sits beneath as subtitle,
+  // matching the Timesheet / Requests title-then-sub hierarchy.
+  if (greet) body = `<div class="hdr-title hdr-greet-title">${escapeHtml(greet)}</div>${date ? `<div class="hdr-sub hdr-greet-sub">${escapeHtml(date)}</div>` : ''}`;
   else if (title) body = `<div class="hdr-title">${escapeHtml(title)}</div>${sub ? `<div class="hdr-sub">${escapeHtml(sub)}</div>` : ''}`;
-  return `<div class="hdr">${top}${body}</div>`;
+  const pageCls = page ? ` hdr-page-${page}` : '';
+  return `<div class="hdr${pageCls}">${top}${body}</div>`;
 }
 
 // ───── HOME ──────────────────────────────────────────────────────────
@@ -528,7 +534,7 @@ function renderHome() {
     ? `<circle cx="104" cy="104" r="98" fill="none" stroke="${ringColor}" stroke-width="8" stroke-linecap="round" stroke-dasharray="615" stroke-dashoffset="430" transform="rotate(-90 104 104)"/>`
     : '';
 
-  const header = renderHeader({ centerLogo: true, greet, date: fmtDate(now) });
+  const header = renderHeader({ centerLogo: true, greet, date: fmtDate(now), page: 'home' });
   return `${header}
     <div class="content">
       ${state.error ? `<div class="banner">${escapeHtml(state.error)}</div>` : ''}
@@ -979,16 +985,23 @@ function renderLeaveSheet() {
   // Shift-time correction only. Pre-filled with today so it's fast to file.
   const s = state.sheet;
   const today = new Date().toISOString().slice(0, 10);
+  // #27 — header banner is trimmed to sit inside the sheet's body padding
+  // (was previously a free-floating title row that visually overflowed).
+  // #28 — visible X close button so the form can be dismissed without
+  // having to tap the backdrop (which less tech-savvy users get stuck on).
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
-    <div class="sheet">
+    <div class="sheet sheet-request">
       <div class="sheet-grip"></div>
-      <div style="display:flex;align-items:center;gap:9px">
-        ${icon('clock', 22, 'var(--blue)')}
-        <div>
-          <h2>Shift-time change request</h2>
-          <div style="font-size:12.5px;font-weight:600;color:var(--muted);margin-top:1px">e.g. you forgot to clock in at 8 — let admin know the real times</div>
+      <div class="sheet-head sheet-head-banner">
+        <div class="sheet-head-title">
+          ${icon('clock', 20, 'var(--blue)')}
+          <div>
+            <h2>Shift-time change request</h2>
+            <div class="sheet-head-sub">e.g. you forgot to clock in at 8 — let admin know the real times</div>
+          </div>
         </div>
+        <button class="sheet-close" id="sheetClose" type="button" aria-label="Close">${icon('x', 20, 'var(--muted)')}</button>
       </div>
       <label style="display:block;margin-top:14px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Date</label>
       <input id="reqFrom" type="date" value="${s.start || today}" style="margin-top:4px">
@@ -1003,7 +1016,7 @@ function renderLeaveSheet() {
         </div>
       </div>
       <textarea id="reqReason" placeholder="What happened? (e.g. forgot to clock in, system was down)" style="margin-top:10px;min-height:60px">${escapeHtml(s.reason || '')}</textarea>
-      <button class="btn-cta blue" id="sheetGo">SUBMIT REQUEST</button>
+      <button class="btn-cta blue" id="sheetGo" type="button">SUBMIT REQUEST</button>
     </div>
   </div>`;
 }
@@ -1134,6 +1147,13 @@ function wireSheet() {
     document.getElementById('reqEndTime').addEventListener('change', e => state.sheet.end_time = e.target.value);
     document.getElementById('reqReason').addEventListener('input', e => state.sheet.reason = e.target.value);
     document.getElementById('sheetGo').addEventListener('click', submitRequest);
+    // #28 — visible X close in the sheet header. Explicitly stop event
+    // propagation so the form never submits as a side-effect of closing.
+    const closeBtn = document.getElementById('sheetClose');
+    if (closeBtn) closeBtn.addEventListener('click', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      state.sheet = null; render();
+    });
   }
 }
 
@@ -1253,8 +1273,8 @@ function renderLeave() {
       <div class="card pad-sm" style="text-align:left;font-size:13px;color:var(--muted);line-height:1.5">
         Use this to ask admin to correct a shift — for example if you forgot to clock in at 8am.
       </div>
-      <button class="btn-cta ok" id="leaveBtn" style="margin-top:14px">
-        ${icon('plus', 22, 'var(--ink)', 2.4)} NEW REQUEST
+      <button class="btn-cta ok btn-cta-icon" id="leaveBtn" style="margin-top:14px">
+        ${icon('plus', 22, 'var(--ink)', 2.4)}<span>NEW REQUEST</span>
       </button>
       <div class="section-title">Your requests</div>
       <div class="col">
@@ -1300,6 +1320,7 @@ function renderTeam() {
   const head = renderHeader({
     title: 'Team', sub: 'Live status · today',
     action: `<button class="exp-btn" id="teamExport">${icon('download', 14, '#fff', 2)} CSV</button>`,
+    page: 'team',
   });
   if (!team) return head + (state.loading ? '<div class="loading">Loading…</div>' : '<div class="loading">No data</div>');
 

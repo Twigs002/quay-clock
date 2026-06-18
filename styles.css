@@ -58,6 +58,26 @@ button { border: none; background: none; cursor: pointer; }
   padding-top: 6px; padding-bottom: 4px;
 }
 .hdr-logo-center img { width: 150px; height: auto; display: block; }
+
+/* #25 — Desktop: centre the Quay 1 logo lock-up on Home + Team pages.
+ * Mobile (<768px) keeps the existing layouts untouched. */
+@media (min-width: 768px) {
+  /* Home already uses .hdr-logo-center — just bump it up a touch on desktop
+   * so it reads as a proper centred lock-up matching the sign-in screen. */
+  .hdr.hdr-page-home .hdr-logo-center img { width: 180px; }
+  /* Team uses .hdr-top with left-aligned logo + right-aligned export button.
+   * On desktop, centre the logo via absolute positioning and keep the
+   * action button to the right. */
+  .hdr.hdr-page-team .hdr-top { position: relative; justify-content: center; }
+  .hdr.hdr-page-team .hdr-top .hdr-logo {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    height: 36px;
+  }
+  .hdr.hdr-page-team .hdr-top > *:not(.hdr-logo) {
+    margin-left: auto;
+  }
+}
 .hdr-title {
   font-size: 27px; font-weight: 800; letter-spacing: -0.3; color: #fff; margin-top: 14px;
 }
@@ -237,7 +257,24 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
 /* End-of-day report sheet (LN / Assistant on clock-out) */
 .sheet-report .sheet-head { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 4px; }
 .sheet-report .sheet-head h3 { margin: 0; font-size: 18px; font-weight: 800; color: var(--ink); }
-.sheet-report .sheet-close { background: none; border: 0; cursor: pointer; padding: 4px; }
+.sheet-report .sheet-close,
+.sheet .sheet-close { background: none; border: 0; cursor: pointer; padding: 4px; flex-shrink: 0; }
+
+/* #27 — Shift-change sheet header banner trimmed so its horizontal extent
+ * matches the sheet's body padding (i.e. it stops at the same column as
+ * the input fields beneath it instead of looking like it overflows).
+ * #28 — visible X close button on the right of the banner. */
+.sheet-request .sheet-head-banner {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 10px; margin: 4px 0 2px;
+}
+.sheet-request .sheet-head-title {
+  display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0;
+}
+.sheet-request .sheet-head-title h2 { font-size: 18px; font-weight: 800; color: var(--ink); }
+.sheet-request .sheet-head-sub {
+  font-size: 12.5px; font-weight: 600; color: var(--muted); margin-top: 1px;
+}
 .sheet-report .sheet-sub { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 14px; font-size: 13px; color: var(--ink); }
 .sheet-report .rep-division-row { display: flex; align-items: center; gap: 10px; }
 .sheet-report .rep-division-row .rep-input { flex: 1; }
@@ -296,6 +333,13 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
 .btn-cta.ok       { color: var(--ink); background: var(--yellow); box-shadow: 0 8px 20px rgba(253,197,3,0.4); }
 .btn-cta.disabled { color: var(--muted); background: var(--line); cursor: not-allowed; box-shadow: none; }
 .btn-cta.blue     { color: #fff; background: var(--blue); box-shadow: 0 10px 22px rgba(61,91,166,0.32); }
+/* #26 — NEW REQUEST CTA: flex-centre so the + icon and label baseline align. */
+.btn-cta-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 8px;
+}
+.btn-cta-icon svg { display: block; flex-shrink: 0; }
+.btn-cta-icon > span { display: inline-block; line-height: 1; }
 
 /* ── timesheet ──────────────────────────────────────────────────────── */
 .bars { display: flex; align-items: flex-end; gap: 8px; height: 84px; }
@@ -378,6 +422,20 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
   font-family: 'Permanent Marker', cursive; font-size: 16px; color: var(--yellow);
   letter-spacing: 0.5px;
 }
+/* #23 — sign-in subtitle restyled as two stacked lines. Montserrat 800
+ * is a best-effort Gotham substitute; swap to real Gotham WOFF if the
+ * brand kit provides it. */
+.login .top .tag-stack {
+  font-family: 'Montserrat', system-ui, -apple-system, Arial, sans-serif;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 2px; line-height: 1.05;
+  font-weight: 800; font-size: 18px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.login .top .tag-stack .tag-line { display: block; }
+.login .top .tag-stack .tag-white  { color: #fff; }
+.login .top .tag-stack .tag-yellow { color: var(--yellow); }
 .login .pin-area { width: 100%; max-width: 360px; }
 .login .login-user {
   width: 100%; box-sizing: border-box;
