@@ -48,7 +48,16 @@ async function boot() {
 
   // Embed mode: ask the parent for a Supabase session BEFORE we render the gate.
   if (EMBED && window.parent && window.parent !== window) {
+    // SECURITY: only trust postMessage handshakes from the dashboard's
+    // origin. Without this gate, any page that successfully iframes this
+    // admin could inject a session it controls.
+    const ALLOWED_PARENTS = new Set([
+      'https://twigs002.github.io',
+      // Same-origin fallback for local dev (e.g. file:// or vite preview).
+      location.origin,
+    ]);
     window.addEventListener('message', async (ev) => {
+      if (!ALLOWED_PARENTS.has(ev.origin)) return;
       const m = ev.data;
       if (!m || m.type !== 'quay-supabase-session' || !m.session) return;
       try {
@@ -65,7 +74,9 @@ async function boot() {
         }
       } catch (e) { /* fall through to local gate */ }
     });
-    try { window.parent.postMessage({ type: 'quay-admin-ready' }, '*'); } catch {}
+    // Target the ready ping at the dashboard origin specifically so
+    // a wildcard '*' doesn't leak the embed presence to other listeners.
+    try { window.parent.postMessage({ type: 'quay-admin-ready' }, 'https://twigs002.github.io'); } catch {}
   }
 
   // Try to restore a Supabase session (could be from the parent handoff a

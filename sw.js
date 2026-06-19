@@ -1,6 +1,6 @@
 /* Quay Clock service worker — cache shell, network-first for API calls */
 // Bumped on every shipping change so stale clients don't serve old JS.
-const CACHE = 'quay-clock-supabase-v31';
+const CACHE = 'quay-clock-supabase-v32';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js',
                'quay-config.js', 'quay-data.js',
                'manifest.json', 'assets/quay1-logo-white.png'];

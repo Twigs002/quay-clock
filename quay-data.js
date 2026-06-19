@@ -425,8 +425,8 @@ const handlers = {
     const id  = String(payload.id || '').toLowerCase().trim();
     const pin = String(payload.pin || '').trim();
     if (!id)  return { ok: false, error: 'Missing id' };
-    if (!/^\d+$/.test(pin) || pin.length < 4) {
-      return { ok: false, error: 'PIN must be 4+ digits' };
+    if (!/^\d+$/.test(pin) || pin.length < 6) {
+      return { ok: false, error: 'PIN must be 6 digits' };
     }
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return { ok: false, error: 'Not signed in' };
