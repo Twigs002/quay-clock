@@ -683,12 +683,11 @@ function openClockoutConfirm() {
 }
 
 async function clockOutDirect() {
+  // Use whatever team is on the home screen. If none is recoverable we
+  // STILL clock out (empty note) rather than fall back to a team picker —
+  // confirmed by user 2026-06-19: the only thing between the staffer and
+  // a clock-out is the red confirm banner, never a team-choice flow.
   const note = (state.home && state.home.lastNote || '').trim();
-  if (!note) {
-    state.sheet = null;
-    openNoteSheet('out');
-    return;
-  }
   // Mark the confirm sheet (if any) busy so its CTA shows the spinner
   // text and can't be re-tapped while the API call is in flight.
   if (state.sheet && state.sheet.type === 'confirm-out') {
@@ -1053,21 +1052,11 @@ async function submitForgotClockOut() {
 }
 
 // ───── CLOCK-OUT CONFIRM SHEET ──────────────────────────────────────
+// Per user direction 2026-06-19: this is a SIMPLE red confirm banner.
+// No team name, no team picker, no division choice — just "are you
+// sure?" + Yes/No. Mis-taps on the home button were ending shifts; the
+// confirm gate fixes that and nothing more.
 function renderClockoutConfirmSheet() {
-  const team = (state.home && state.home.lastNote || '').trim() || 'your team';
-  const lastIn = state.home && state.home.lastIn;
-  // Elapsed time since clock-in. lastIn may be null if state.home didn't
-  // load yet — fall back to "your shift" rather than a wrong number.
-  let elapsed = '';
-  if (lastIn) {
-    const ms = Date.now() - new Date(lastIn).getTime();
-    if (Number.isFinite(ms) && ms >= 0) {
-      const totalMin = Math.floor(ms / 60000);
-      const h = Math.floor(totalMin / 60);
-      const m = totalMin % 60;
-      elapsed = h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
-    }
-  }
   const busy = state.sheet.busy || false;
   const err = state.sheet.error || '';
   return `<div class="sheet-wrap" id="sheetWrap">
@@ -1076,11 +1065,10 @@ function renderClockoutConfirmSheet() {
       <div class="sheet-grip"></div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         ${icon('clock', 22, 'var(--red)')}
-        <h2 style="font-size:18px;margin:0">Clock out for the day?</h2>
+        <h2 style="font-size:18px;margin:0">Are you sure you want to clock out?</h2>
       </div>
-      <p style="margin:4px 0 14px;color:var(--muted);font-size:13px;line-height:1.45">
-        You'll end your shift on <b style="color:var(--ink)">${escapeHtml(team)}</b>${elapsed ? ` after <b style="color:var(--ink)">${elapsed}</b>` : ''}.
-        If you tapped this by mistake, choose <i>Stay clocked in</i>.
+      <p style="margin:4px 0 16px;color:var(--muted);font-size:13px;line-height:1.45">
+        Tap <b style="color:var(--ink)">Yes</b> to end your shift now, or <b style="color:var(--ink)">Stay clocked in</b> if you tapped this by mistake.
       </p>
       ${err ? `<div class="banner" id="sheetErr" style="display:block;margin-bottom:10px">${escapeHtml(err)}</div>` : ''}
       <div style="display:flex;flex-direction:column;gap:10px">
