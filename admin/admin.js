@@ -223,6 +223,7 @@ const I = {
   sun:       '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M5 5l1.5 1.5M17.5 17.5 19 19M3 12h2M19 12h2M5 19l1.5-1.5M17.5 6.5 19 5"/>',
   bell:      '<path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   chevron:   '<path d="M9 6l6 6-6 6"/>',
+  logout:    '<path d="M14 7V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/><path d="M10 12h10m0 0-3-3m3 3-3 3"/>',
   gear:      '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M4.2 7l2.2 1.3M17.6 15.7l2.2 1.3M19.8 7l-2.2 1.3M6.4 15.7 4.2 17M2.5 12h2.6M18.9 12h2.6"/>',
 };
 function icon(name, size = 20, stroke = 'currentColor', sw = 1.8) {
@@ -347,7 +348,7 @@ function renderTopNav() {
       <div class="av" style="background:${avColor(0)};width:30px;height:30px;font-size:11.5px">${initials(state.admin.name)}</div>
       <span>${escapeHtml(state.admin.name)}</span>
     </div>
-    <button class="signout-mini" id="signOut" title="Sign out">${icon('chevron', 16, 'rgba(255,255,255,0.6)')}</button>
+    <button class="signout-mini" id="signOut" title="Sign out">${icon('logout', 16, 'rgba(255,255,255,0.75)')}</button>
   </div>`;
 }
 
@@ -361,11 +362,14 @@ const TITLES = {
 function renderTopbar() {
   const [t, sub] = TITLES[state.view] || ['', ''];
   const now = new Date();
-  return `<div class="topbar">
-    <div>
+  // In embed mode the parent dashboard already shows the section title
+  // in its own topbar — rendering ours below it gives two stacked titles.
+  // Drop the title block and right-align the controls.
+  return `<div class="topbar${EMBED ? ' topbar-embed' : ''}">
+    ${EMBED ? '' : `<div>
       <h1>${escapeHtml(t)}</h1>
       <div class="sub">${escapeHtml(sub)}</div>
-    </div>
+    </div>`}
     <div class="right">
       <div class="search">
         ${icon('search', 17, 'var(--muted)')}

@@ -117,6 +117,10 @@ html.embed, html.embed body { background: var(--paper); }
   display: flex; align-items: center; gap: 16px; padding: 18px 28px;
   border-bottom: 1px solid var(--line); background: #fff;
 }
+/* Embed mode: parent dashboard provides the section title, so we drop
+   ours and let the right-side controls keep their alignment. */
+.topbar-embed { padding: 10px 18px; justify-content: flex-end; }
+.topbar-embed .right { margin-left: 0; }
 .topbar h1 {
   font-size: 21px; font-weight: 800; color: var(--ink); letter-spacing: -0.2px; margin: 0;
 }

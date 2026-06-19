@@ -6,6 +6,7 @@
   --blue900:  #27396B;
   --blue700:  #34508F;
   --blueSoft: #EAF0FB;
+  --blue-tint: #E7EEF4;  /* picker-chip / banner tint — used by app.js inline styles */
   --yellow:   #FDC503;
   --yellow6:  #E7B000;
   --sky:      #98C5ED;
