@@ -1317,7 +1317,23 @@ function renderLeave() {
               </div>
             </td>
             <td>${escapeHtml(fmtDateRange(l.start_date, l.end_date))}</td>
-            <td class="tnum" style="font-weight:700">${escapeHtml(t(l.proposed_start) || '—')} – ${escapeHtml(t(l.proposed_end) || '—')}</td>
+            <td class="tnum" style="font-weight:700;font-size:12.5px;line-height:1.5">
+              ${l.proposed_start ? `
+                <div>
+                  <span style="color:var(--muted);font-weight:600;font-size:10.5px">IN:</span>
+                  <span style="color:var(--muted)">${l.original_in ? escapeHtml(t(l.original_in)) : 'no clock-in on this date'}</span>
+                  <span style="color:var(--muted)">→</span>
+                  <span>${escapeHtml(t(l.proposed_start))}</span>
+                </div>` : ''}
+              ${l.proposed_end ? `
+                <div>
+                  <span style="color:var(--muted);font-weight:600;font-size:10.5px">OUT:</span>
+                  <span style="color:var(--muted)">${l.original_out ? escapeHtml(t(l.original_out)) : 'no clock-out on this date'}</span>
+                  <span style="color:var(--muted)">→</span>
+                  <span>${escapeHtml(t(l.proposed_end))}</span>
+                </div>` : ''}
+              ${!l.proposed_start && !l.proposed_end ? '<span style="color:var(--muted)">—</span>' : ''}
+            </td>
             <td class="muted reason-cell" title="${escapeHtml(l.reason || '')}"><div class="reason-text">${escapeHtml(l.reason || '—')}</div></td>
             <td><span class="pill-st ${escapeHtml(l.status)}">${escapeHtml(l.status)}</span></td>
             <td class="r">

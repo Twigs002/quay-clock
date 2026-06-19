@@ -281,7 +281,41 @@ const handlers = {
     // Decorate with agent_name (cheap join via roster cache).
     const { data: roster } = await sb.from('staff').select('id, name');
     const nameById = new Map((roster || []).map((s) => [s.id, s.name]));
-    const leave = (data || []).map((r) => ({
+    // Enrich each request with the staff's ACTUAL clock events on the
+    // shift date so the admin reviewer sees "original 08:15 → proposed
+    // 08:00" instead of just the proposed time. Batched into ONE events
+    // query keyed by staff_id (per-day filter happens client-side).
+    const reqs = data || [];
+    const staffIds = [...new Set(reqs.map(r => r.staff_id))];
+    let eventsByStaff = new Map();
+    if (staffIds.length) {
+      // Pull a wide-enough window covering every requested date.
+      const dates = reqs.map(r => r.start_date).filter(Boolean).sort();
+      const fromIso = dates.length ? new Date(dates[0] + 'T00:00:00').toISOString() : null;
+      const toIso   = dates.length
+        ? new Date(new Date(dates[dates.length - 1] + 'T00:00:00').getTime() + 24 * 3600 * 1000).toISOString()
+        : null;
+      if (fromIso && toIso) {
+        const { data: evs } = await sb.from('events')
+          .select('staff_id, ts, dir')
+          .in('staff_id', staffIds)
+          .gte('ts', fromIso).lt('ts', toIso)
+          .order('ts', { ascending: true });
+        (evs || []).forEach(e => {
+          const key = `${e.staff_id}|${String(e.ts).slice(0, 10)}`;
+          if (!eventsByStaff.has(key)) eventsByStaff.set(key, []);
+          eventsByStaff.get(key).push(e);
+        });
+      }
+    }
+    const findOriginal = (staffId, date, dir) => {
+      const arr = eventsByStaff.get(`${staffId}|${date}`) || [];
+      const ev = dir === 'in'
+        ? arr.find(e => e.dir === 'in')
+        : [...arr].reverse().find(e => e.dir === 'out');
+      return ev ? ev.ts : '';
+    };
+    const leave = reqs.map((r) => ({
       id: r.id,
       ts: r.created_at,
       agent_id: r.staff_id,
@@ -293,6 +327,10 @@ const handlers = {
       reason: r.reason || '',
       proposed_start: r.proposed_start || '',
       proposed_end:   r.proposed_end || '',
+      // ISO timestamps of the agent's actual first IN / last OUT events
+      // on the request's shift date — used by the admin review UI.
+      original_in:  findOriginal(r.staff_id, r.start_date, 'in'),
+      original_out: findOriginal(r.staff_id, r.start_date, 'out'),
       status: r.status,
       decided_by: r.decided_by || '',
       decided_ts: r.decided_at || '',

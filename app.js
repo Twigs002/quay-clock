@@ -1005,16 +1005,19 @@ function renderLeaveSheet() {
       </div>
       <label style="display:block;margin-top:14px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Date</label>
       <input id="reqFrom" type="date" value="${s.start || today}" style="margin-top:4px">
-      <div style="display:flex;gap:10px;margin-top:10px">
-        <div style="flex:1">
-          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Started at</label>
-          <input id="reqStartTime" type="time" value="${s.start_time || '08:00'}" style="margin-top:4px">
-        </div>
-        <div style="flex:1">
-          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Finished at</label>
-          <input id="reqEndTime" type="time" value="${s.end_time || '17:00'}" style="margin-top:4px">
-        </div>
+
+      <label style="display:block;margin-top:14px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Which time to correct?</label>
+      <div class="req-which-seg" style="display:flex;gap:10px;margin-top:6px">
+        <button type="button" data-req-which="in" class="req-which ${(s.which || 'in') === 'in' ? 'on' : ''}" style="flex:1;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:${(s.which || 'in') === 'in' ? 'var(--blue)' : 'var(--card)'};color:${(s.which || 'in') === 'in' ? '#fff' : 'var(--ink)'};font-weight:700;font-size:13px;cursor:pointer">Clock-IN time</button>
+        <button type="button" data-req-which="out" class="req-which ${s.which === 'out' ? 'on' : ''}" style="flex:1;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:${s.which === 'out' ? 'var(--blue)' : 'var(--card)'};color:${s.which === 'out' ? '#fff' : 'var(--ink)'};font-weight:700;font-size:13px;cursor:pointer">Clock-OUT time</button>
       </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:5px">Pick one — staff can only request a correction to one side per request, to keep the admin review clean.</div>
+
+      <label style="display:block;margin-top:12px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">${(s.which || 'in') === 'in' ? 'What the clock-in SHOULD have been' : 'What the clock-out SHOULD have been'}</label>
+      ${(s.which || 'in') === 'in'
+        ? `<input id="reqStartTime" type="time" value="${s.start_time || '08:00'}" style="margin-top:4px">`
+        : `<input id="reqEndTime"   type="time" value="${s.end_time   || '17:00'}" style="margin-top:4px">`}
+
       <textarea id="reqReason" placeholder="What happened? (e.g. forgot to clock in, system was down)" style="margin-top:10px;min-height:60px">${escapeHtml(s.reason || '')}</textarea>
       <button class="btn-cta blue" id="sheetGo" type="button">SUBMIT REQUEST</button>
     </div>
@@ -1148,8 +1151,18 @@ function wireSheet() {
   }
   if (state.sheet.type === 'request') {
     document.getElementById('reqFrom').addEventListener('change', e => state.sheet.start = e.target.value);
-    document.getElementById('reqStartTime').addEventListener('change', e => state.sheet.start_time = e.target.value);
-    document.getElementById('reqEndTime').addEventListener('change', e => state.sheet.end_time = e.target.value);
+    // Only one of reqStartTime / reqEndTime is rendered at a time now.
+    const st = document.getElementById('reqStartTime');
+    const en = document.getElementById('reqEndTime');
+    if (st) st.addEventListener('change', e => state.sheet.start_time = e.target.value);
+    if (en) en.addEventListener('change', e => state.sheet.end_time   = e.target.value);
+    // IN/OUT toggle — re-render to swap which time input shows.
+    document.querySelectorAll('.req-which').forEach(b => {
+      b.addEventListener('click', () => {
+        state.sheet.which = b.dataset.reqWhich;
+        render();
+      });
+    });
     document.getElementById('reqReason').addEventListener('input', e => state.sheet.reason = e.target.value);
     document.getElementById('sheetGo').addEventListener('click', submitRequest);
     // #28 — visible X close in the sheet header. Explicitly stop event
@@ -1164,18 +1177,26 @@ function wireSheet() {
 
 async function submitRequest() {
   const s = state.sheet || {};
+  const which = s.which || 'in';
   const date = s.start || document.getElementById('reqFrom').value;
-  const st   = s.start_time || document.getElementById('reqStartTime').value;
-  const et   = s.end_time   || document.getElementById('reqEndTime').value;
+  const stEl = document.getElementById('reqStartTime');
+  const enEl = document.getElementById('reqEndTime');
+  const proposed = which === 'in'
+    ? (s.start_time || (stEl && stEl.value))
+    : (s.end_time   || (enEl && enEl.value));
   const reason = s.reason || document.getElementById('reqReason').value;
   if (!date) { showToast('Pick the date of the shift'); return; }
-  if (!st || !et) { showToast('Pick start and finish times'); return; }
+  if (!proposed) { showToast(`Pick the corrected clock-${which} time`); return; }
   try {
     await api('leave_create', {
       agent_id: state.agent.id,
       type: 'Shift change',
       start: date, end: date,
-      proposed_start: st, proposed_end: et,
+      // Only send the side the user picked — the other stays null in
+      // the requests row so the admin review shows just that one
+      // correction instead of both.
+      proposed_start: which === 'in'  ? proposed : null,
+      proposed_end:   which === 'out' ? proposed : null,
       reason: reason || '',
     });
     state.sheet = null;
