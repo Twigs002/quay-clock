@@ -287,6 +287,33 @@ td.reason-cell.details-open .reason-text {
 .tdate { font-size: 11px; font-weight: 700; color: var(--muted); }
 .tdate.today { color: var(--ink); }
 
+/* weekly target progress — per-staff bar list on the admin dashboard */
+.wkt-list { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+.wkt-row { display: flex; flex-direction: column; gap: 5px; }
+.wkt-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12.5px; }
+.wkt-name { font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wkt-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+.wkt-val.ok    { color: var(--green); }
+.wkt-val.warn  { color: var(--amber); }
+.wkt-val.low   { color: var(--red); }
+.wkt-val.untargeted { color: var(--muted); }
+.wkt-bar  { background: var(--line); border-radius: 999px; height: 7px; overflow: hidden; }
+.wkt-fill { height: 100%; border-radius: 999px; transition: width .25s ease; }
+.wkt-fill.ok    { background: var(--green); }
+.wkt-fill.warn  { background: var(--amber); }
+.wkt-fill.low   { background: var(--red); }
+.wkt-fill.untargeted { background: var(--muted); }
+
+/* Team page — "currently working on" chip next to status tag */
+.team-on {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--blueSoft); color: var(--blue);
+  font-size: 11.5px; font-weight: 700;
+  padding: 4px 9px; border-radius: 999px;
+  max-width: 180px;
+}
+.team-on span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* team grid */
 .team-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .team-card { padding: 18px 20px; }

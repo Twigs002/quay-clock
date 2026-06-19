@@ -518,9 +518,69 @@ function renderDashboard() {
           <h3 style="font-size:15.5px;font-weight:800">Team hours · this week</h3>
           ${renderWeekHoursChart()}
         </div>
+
+        <div class="card" style="padding:18px 20px">
+          <h3 style="font-size:15.5px;font-weight:800">Weekly target · progress</h3>
+          ${renderWeeklyTargetProgress(team)}
+        </div>
       </div>
     </div>
   `;
+}
+
+// Per-staff weekly clocked-hours vs their weekly_hours target. Sorted
+// most-behind-first so the dashboard surfaces who still owes hours
+// before week-end. Staff with no target set show their hours-so-far
+// without a bar (you can't measure progress against an unset target).
+function renderWeeklyTargetProgress(team) {
+  const events = state.data.weekEvents || [];
+  const hoursById = new Map();
+  events.forEach(e => {
+    if (e.action !== 'out' || e.duration_hrs == null) return;
+    hoursById.set(e.id, (hoursById.get(e.id) || 0) + Number(e.duration_hrs));
+  });
+  // Only show staff who have either a target OR worked hours this week.
+  // Pure benchwarmers with no target make the list noisier without
+  // adding signal — they'd all show 0/0.
+  const rows = team
+    .filter(s => s.weekly_hours != null || hoursById.has(s.id))
+    .map(s => {
+      const hrs = Number(hoursById.get(s.id) || 0);
+      const target = s.weekly_hours != null ? Number(s.weekly_hours) : null;
+      const pct = target && target > 0 ? Math.min(999, (hrs / target) * 100) : null;
+      return { id: s.id, name: s.name, role: s.role, hrs, target, pct };
+    })
+    .sort((a, b) => {
+      // Untargeted staff sink to the bottom; targeted staff sort by % asc.
+      if (a.pct == null && b.pct == null) return a.name.localeCompare(b.name);
+      if (a.pct == null) return 1;
+      if (b.pct == null) return -1;
+      return a.pct - b.pct;
+    });
+
+  if (rows.length === 0) {
+    return `<div class="muted" style="font-size:13px;font-weight:500;padding:10px 0">No staff with hours or weekly targets yet.</div>`;
+  }
+
+  return `<div class="wkt-list">
+    ${rows.map(r => {
+      const targetLabel = r.target != null ? `${r.hrs.toFixed(1)} / ${r.target}h` : `${r.hrs.toFixed(1)}h · no target`;
+      // Colour bands: <60% red, 60–89% amber, ≥90% green. Mirrors the
+      // dashboard's standard performance traffic-light treatment.
+      const tone = r.pct == null ? 'untargeted'
+                 : r.pct >= 90 ? 'ok'
+                 : r.pct >= 60 ? 'warn'
+                 : 'low';
+      const barPct = r.pct == null ? 0 : Math.min(100, r.pct);
+      return `<div class="wkt-row">
+        <div class="wkt-meta">
+          <span class="wkt-name">${escapeHtml(r.name)}</span>
+          <span class="wkt-val tnum ${tone}">${escapeHtml(targetLabel)}${r.pct != null ? ` · ${r.pct.toFixed(0)}%` : ''}</span>
+        </div>
+        <div class="wkt-bar"><div class="wkt-fill ${tone}" style="width:${barPct.toFixed(1)}%"></div></div>
+      </div>`;
+    }).join('')}
+  </div>`;
 }
 
 function renderWeekHoursChart() {
@@ -1383,6 +1443,10 @@ function wireLeave() {
 // ───── TEAM ──────────────────────────────────────────────────────────
 function renderTeam() {
   const roster = state.data.roster || [];
+  // Live overlay so each card surfaces what team this person is currently
+  // clocked into — same source the dashboard uses, including managers and
+  // assistants. Lets the Team page show "Sheldon → Bulls" at a glance.
+  const liveById = new Map((state.data.team || []).map(t => [t.id, t]));
   const canAddStaff = !!(state.admin && state.admin.admin === true && state.admin.super !== false && (state.admin.super || state.admin.is_super));
   return `
     <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
@@ -1395,6 +1459,8 @@ function renderTeam() {
       ${roster.map((s, i) => {
         const rate = s.hourly_rate != null ? `R${Number(s.hourly_rate).toFixed(2)}/hr` : 'No rate set';
         const hrs = s.weekly_hours != null ? `${Number(s.weekly_hours)}h/week` : 'No target';
+        const live = liveById.get(s.id);
+        const currentTeam = (live && live.status === 'in') ? (live.note || '').trim() : '';
         return `<div class="card team-card" data-search="${escapeHtml(((s.name||'') + ' ' + (s.id||'')).toLowerCase())}">
           <div class="top">
             <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px">${initials(s.name)}</div>
@@ -1405,7 +1471,10 @@ function renderTeam() {
             </div>
             <button class="btn small" data-edit-staff="${escapeHtml(s.id)}">Edit</button>
           </div>
-          <div style="margin-top:14px">${tagFor(s.status)}</div>
+          <div style="margin-top:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            ${tagFor(s.status)}
+            ${currentTeam ? `<span class="team-on" title="Currently working on">${icon('clipboard', 12, 'var(--blue)')}<span>${escapeHtml(currentTeam)}</span></span>` : ''}
+          </div>
           <div class="meta">
             <div class="li">${icon('users', 14, 'var(--muted)')}@${escapeHtml(s.id || '—')}</div>
             <div class="li">${icon('clock', 14, 'var(--muted)')}${escapeHtml(rate)} · ${escapeHtml(hrs)}</div>

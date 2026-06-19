@@ -591,7 +591,9 @@ function wireHome() {
       if (d === 'ln' || d === 'assistant') {
         openClockOutReport();
       } else {
-        openNoteSheet('out');
+        // Clock-out inherits the team currently on the home screen
+        // (set at clock-in, updated by mid-shift Change Team). No picker.
+        clockOutDirect();
       }
     } else {
       openNoteSheet('in');
@@ -668,6 +670,31 @@ function _splitNote(s) {
 function _isSinglePick() {
   const d = String((state.agent && state.agent.designation) || '').toLowerCase();
   return d === 'rm' || d === 'fancy' || d === 'ln';
+}
+
+// Clock-out without a picker. The team is whatever's on the home
+// screen — set at clock-in or by the mid-shift Change Team flow.
+// Falls back to the picker if no team is recoverable so the staffer
+// never gets stuck unable to clock out.
+async function clockOutDirect() {
+  const note = (state.home && state.home.lastNote || '').trim();
+  if (!note) {
+    openNoteSheet('out');
+    return;
+  }
+  state.home = state.home || {};
+  state.home._busyOut = true;
+  render();
+  try {
+    await api('clock', { agent_id: state.agent.id, dir: 'out', note });
+    showToast('Clocked out ✓');
+    await loadHome();
+    render();
+  } catch (e) {
+    state.home._busyOut = false;
+    state.error = String(e.message || e);
+    render();
+  }
 }
 
 function openNoteSheet(direction = 'in') {
