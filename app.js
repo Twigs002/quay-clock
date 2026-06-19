@@ -591,9 +591,11 @@ function wireHome() {
       if (d === 'ln' || d === 'assistant') {
         openClockOutReport();
       } else {
-        // Clock-out inherits the team currently on the home screen
-        // (set at clock-in, updated by mid-shift Change Team). No picker.
-        clockOutDirect();
+        // Confirm first — staff have been mis-tapping the big button and
+        // ending shifts they didn't mean to end. Once confirmed, the
+        // clock-out inherits the team currently on the home screen
+        // (set at clock-in, updated by mid-shift Change Team).
+        openClockoutConfirm();
       }
     } else {
       openNoteSheet('in');
@@ -672,27 +674,45 @@ function _isSinglePick() {
   return d === 'rm' || d === 'fancy' || d === 'ln';
 }
 
-// Clock-out without a picker. The team is whatever's on the home
-// screen — set at clock-in or by the mid-shift Change Team flow.
-// Falls back to the picker if no team is recoverable so the staffer
-// never gets stuck unable to clock out.
+// Confirm-clock-out sheet. Staff have been accidentally tapping the big
+// clock button at the end of a long day and ending shifts mid-call — this
+// adds a deliberate "yes I mean it" step in front of clockOutDirect.
+function openClockoutConfirm() {
+  state.sheet = { type: 'confirm-out', busy: false, error: '' };
+  render();
+}
+
 async function clockOutDirect() {
   const note = (state.home && state.home.lastNote || '').trim();
   if (!note) {
+    state.sheet = null;
     openNoteSheet('out');
     return;
+  }
+  // Mark the confirm sheet (if any) busy so its CTA shows the spinner
+  // text and can't be re-tapped while the API call is in flight.
+  if (state.sheet && state.sheet.type === 'confirm-out') {
+    state.sheet.busy = true;
+    state.sheet.error = '';
   }
   state.home = state.home || {};
   state.home._busyOut = true;
   render();
   try {
     await api('clock', { agent_id: state.agent.id, dir: 'out', note });
+    state.sheet = null;
     showToast('Clocked out ✓');
     await loadHome();
     render();
   } catch (e) {
     state.home._busyOut = false;
-    state.error = String(e.message || e);
+    const msg = String(e.message || e);
+    if (state.sheet && state.sheet.type === 'confirm-out') {
+      state.sheet.busy = false;
+      state.sheet.error = msg;
+    } else {
+      state.error = msg;
+    }
     render();
   }
 }
@@ -1032,6 +1052,49 @@ async function submitForgotClockOut() {
   }
 }
 
+// ───── CLOCK-OUT CONFIRM SHEET ──────────────────────────────────────
+function renderClockoutConfirmSheet() {
+  const team = (state.home && state.home.lastNote || '').trim() || 'your team';
+  const lastIn = state.home && state.home.lastIn;
+  // Elapsed time since clock-in. lastIn may be null if state.home didn't
+  // load yet — fall back to "your shift" rather than a wrong number.
+  let elapsed = '';
+  if (lastIn) {
+    const ms = Date.now() - new Date(lastIn).getTime();
+    if (Number.isFinite(ms) && ms >= 0) {
+      const totalMin = Math.floor(ms / 60000);
+      const h = Math.floor(totalMin / 60);
+      const m = totalMin % 60;
+      elapsed = h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+    }
+  }
+  const busy = state.sheet.busy || false;
+  const err = state.sheet.error || '';
+  return `<div class="sheet-wrap" id="sheetWrap">
+    <div class="sheet-back" id="sheetBack"></div>
+    <div class="sheet sheet-confirm-out" role="dialog" aria-modal="true">
+      <div class="sheet-grip"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        ${icon('clock', 22, 'var(--red)')}
+        <h2 style="font-size:18px;margin:0">Clock out for the day?</h2>
+      </div>
+      <p style="margin:4px 0 14px;color:var(--muted);font-size:13px;line-height:1.45">
+        You'll end your shift on <b style="color:var(--ink)">${escapeHtml(team)}</b>${elapsed ? ` after <b style="color:var(--ink)">${elapsed}</b>` : ''}.
+        If you tapped this by mistake, choose <i>Stay clocked in</i>.
+      </p>
+      ${err ? `<div class="banner" id="sheetErr" style="display:block;margin-bottom:10px">${escapeHtml(err)}</div>` : ''}
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button class="btn-cta ${busy ? 'disabled' : 'red'}" id="confirmOutGo" type="button">
+          ${busy ? 'Clocking out…' : 'Yes, clock me out'}
+        </button>
+        <button class="btn-cta-secondary" id="confirmOutStay" type="button" ${busy ? 'disabled' : ''}>
+          Stay clocked in
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
 // ───── NOTE SHEET (and LEAVE SHEET) ─────────────────────────────────
 function renderSheet() {
   if (!state.sheet) return '';
@@ -1039,6 +1102,7 @@ function renderSheet() {
   if (state.sheet.type === 'request') return renderLeaveSheet();
   if (state.sheet.type === 'report')  return renderReportSheet();
   if (state.sheet.type === 'forgot')  return renderForgotSheet();
+  if (state.sheet.type === 'confirm-out') return renderClockoutConfirmSheet();
   return '';
 }
 
@@ -1154,6 +1218,19 @@ function renderLeaveSheet() {
 function wireSheet() {
   const back = document.getElementById('sheetBack');
   if (back) back.addEventListener('click', () => { state.sheet = null; render(); });
+  if (state.sheet.type === 'confirm-out') {
+    const go = document.getElementById('confirmOutGo');
+    const stay = document.getElementById('confirmOutStay');
+    if (go) go.addEventListener('click', () => {
+      if (state.sheet && state.sheet.busy) return;
+      clockOutDirect();
+    });
+    if (stay) stay.addEventListener('click', () => {
+      if (state.sheet && state.sheet.busy) return;
+      state.sheet = null; render();
+    });
+    return;
+  }
   if (state.sheet.type === 'report') { wireReportSheet(); return; }
   if (state.sheet.type === 'forgot') {
     const dateEl = document.getElementById('fgDate');

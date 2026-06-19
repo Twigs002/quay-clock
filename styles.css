@@ -341,6 +341,15 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
 }
 .btn-cta-icon svg { display: block; flex-shrink: 0; }
 .btn-cta-icon > span { display: inline-block; line-height: 1; }
+/* Outlined "stay clocked in" / cancel companion to .btn-cta — same
+   height/typography so the two stack flush on the confirm sheet. */
+.btn-cta-secondary {
+  width: 100%; margin-top: 0; padding: 16px; border-radius: 16px;
+  font-weight: 700; font-size: 15px; letter-spacing: 0.3px; cursor: pointer;
+  background: #fff; color: var(--ink); border: 1.5px solid var(--line);
+}
+.btn-cta-secondary:hover { background: var(--paper); border-color: var(--muted); }
+.btn-cta-secondary[disabled] { opacity: 0.5; cursor: not-allowed; }
 
 /* ── timesheet ──────────────────────────────────────────────────────── */
 .bars { display: flex; align-items: flex-end; gap: 8px; height: 84px; }
