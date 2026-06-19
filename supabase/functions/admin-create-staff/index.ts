@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
   const pin  = String(body.pin || "").trim();
   if (!id)            return json({ ok: false, error: "username (id) is required" }, 400);
   if (!name)          return json({ ok: false, error: "name is required" }, 400);
-  if (pin.length < 4) return json({ ok: false, error: "PIN must be 4+ digits" }, 400);
+  if (pin.length < 6) return json({ ok: false, error: "PIN must be 6 digits" }, 400);
 
   const email = `${id}@quay1.local`;
 

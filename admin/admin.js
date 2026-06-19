@@ -1502,13 +1502,13 @@ function renderStaffModal() {
         ${isEdit ? (
           (state.admin && (state.admin.super || state.admin.is_super)) ? `
           <label class="field"><span>Reset PIN</span>
-            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${escapeHtml(f.pin)}" placeholder="Leave blank to keep current — enter 4 digits to change">
+            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(f.pin)}" placeholder="Leave blank to keep current — enter 6 digits to change">
             <div class="hint">Only fill this in if you want to change ${escapeHtml(f.name || 'their')} login PIN.</div>
           </label>
         ` : ''
         ) : `
           <label class="field"><span>PIN</span>
-            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${escapeHtml(f.pin)}" placeholder="4 digits — they'll use this to log in">
+            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(f.pin)}" placeholder="6 digits — they'll use this to log in">
           </label>
         `}
         <label class="check">
@@ -1575,7 +1575,7 @@ function wireStaffModal() {
   });
   const division = document.getElementById('sfDivision');
   if (division) division.addEventListener('input', () => { f.division = division.value; });
-  if (pin) pin.addEventListener('input', () => { f.pin = pin.value.replace(/[^0-9]/g, '').slice(0, 4); pin.value = f.pin; });
+  if (pin) pin.addEventListener('input', () => { f.pin = pin.value.replace(/[^0-9]/g, '').slice(0, 6); pin.value = f.pin; });
   adm.addEventListener('change', () => { f.admin = adm.checked; });
   if (sup) sup.addEventListener('change', () => { f.super = sup.checked; });
 
@@ -1587,8 +1587,8 @@ async function submitStaffModal() {
   if (!f) return;
   f.error = '';
   if (!f.name.trim()) { f.error = 'Name is required'; render(); return; }
-  if (f.mode === 'add' && (!f.pin || f.pin.length !== 4)) {
-    f.error = 'PIN must be 4 digits'; render(); return;
+  if (f.mode === 'add' && (!f.pin || f.pin.length !== 6)) {
+    f.error = 'PIN must be 6 digits'; render(); return;
   }
   f.busy = true; render();
   try {
@@ -1609,8 +1609,8 @@ async function submitStaffModal() {
     } else {
       // Validate optional PIN reset before any writes.
       const newPin = (f.pin || '').trim();
-      if (newPin && newPin.length !== 4) {
-        f.busy = false; f.error = 'New PIN must be 4 digits (or leave blank to keep current).';
+      if (newPin && newPin.length !== 6) {
+        f.busy = false; f.error = 'New PIN must be 6 digits (or leave blank to keep current).';
         render(); return;
       }
       await api('staff_update', {
@@ -1739,7 +1739,7 @@ function statusLabel(s) {
 
 // ───── GATE (Admin sign-in: username + PIN) ──────────────────────────
 function renderGate() {
-  const dots = [0,1,2,3].map(i => `<div class="dot ${i < state.pinBuf.length ? 'filled' : ''}"></div>`).join('');
+  const dots = [0,1,2,3,4,5].map(i => `<div class="dot ${i < state.pinBuf.length ? 'filled' : ''}"></div>`).join('');
   const userPref = (typeof localStorage !== 'undefined' && localStorage.getItem('quay_admin_last_user')) || state.loginUser || '';
   return `<div class="gate">
     <div class="box ${state.pinErr ? 'pin-error' : ''}">
@@ -1765,9 +1765,9 @@ function wireGate() {
   const u = document.getElementById('gateUser');
   if (u) u.addEventListener('input', () => { state.loginUser = u.value; });
   document.querySelectorAll('.gate .key[data-d]').forEach(b => b.addEventListener('click', () => {
-    if (state.pinBuf.length >= 4) return;
+    if (state.pinBuf.length >= 6) return;
     state.pinBuf += b.dataset.d; state.pinErr = false; state.error = null; render();
-    if (state.pinBuf.length === 4) submitAdminPin();
+    if (state.pinBuf.length === 6) submitAdminPin();
   }));
   const back = document.querySelector('.gate .key[data-back]');
   if (back) back.addEventListener('click', () => { state.pinBuf = state.pinBuf.slice(0, -1); render(); });

@@ -410,7 +410,7 @@ function wireTabs() {
 
 // ───── LOGIN ─────────────────────────────────────────────────────────
 function renderLogin() {
-  const dots = [0,1,2,3].map(i =>
+  const dots = [0,1,2,3,4,5].map(i =>
     `<div class="pin-dot ${i < state.pinBuf.length ? 'filled' : ''}"></div>`).join('');
   return `<div class="login ${state.pinErr ? 'pin-error' : ''}">
     <div class="top">
@@ -442,10 +442,10 @@ function wireLogin() {
   const u = document.getElementById('loginUser');
   if (u) u.addEventListener('input', () => { state.loginUser = u.value; }); // silent — no rerender
   document.querySelectorAll('.key[data-d]').forEach(b => b.addEventListener('click', () => {
-    if (state.pinBuf.length >= 4) return;
+    if (state.pinBuf.length >= 6) return;
     state.pinBuf += b.dataset.d; state.pinErr = false; state.error = null;
     render();
-    if (state.pinBuf.length === 4) submitPin();
+    if (state.pinBuf.length === 6) submitPin();
   }));
   const back = document.querySelector('.key[data-back]');
   if (back) back.addEventListener('click', () => {

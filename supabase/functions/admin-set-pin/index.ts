@@ -52,8 +52,8 @@ Deno.serve(async (req) => {
   const id  = String(body.id || "").toLowerCase().trim();
   const pin = String(body.pin || "").trim();
   if (!id)            return json({ ok: false, error: "Target id is required" }, 400);
-  if (!/^\d+$/.test(pin) || pin.length < 4) {
-    return json({ ok: false, error: "PIN must be 4+ digits" }, 400);
+  if (!/^\d+$/.test(pin) || pin.length < 6) {
+    return json({ ok: false, error: "PIN must be 6 digits" }, 400);
   }
 
   // 3. Look up the target staff row to get auth_user_id.
