@@ -1137,7 +1137,12 @@ function wireSheet() {
     refreshSelectedAndCTA();
     if (go) go.addEventListener('click', () => {
       if (state.sheet.busy) return;
-      if (!state.sheet.value || !state.sheet.value.trim()) return;
+      // value is an ARRAY now (multi-select picker). Block submit if the
+      // user hasn't picked at least one team. Older string-based guard
+      // was throwing 'value.trim is not a function' and silently breaking
+      // every clock-in.
+      const picks = Array.isArray(state.sheet.value) ? state.sheet.value : [];
+      if (!picks.length) return;
       submitClock(dir);
     });
   }
