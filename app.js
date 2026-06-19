@@ -164,6 +164,7 @@ const ICON = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M5 5l1.5 1.5M17.5 17.5 19 19M3 12h2M19 12h2M5 19l1.5-1.5M17.5 6.5 19 5"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16M3 21v-5h5"/>',
 };
 function icon(name, size = 22, stroke = 'currentColor', sw = 1.8) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" style="display:block">${ICON[name] || ''}</svg>`;
@@ -556,6 +557,11 @@ function renderHome() {
             ${icon('clipboard', 17, 'var(--blue)')}
             <span>${escapeHtml(h.lastNote)}</span>
           </div>` : ''}
+        ${on && _isSinglePick() ? `
+          <button class="change-team-btn" id="changeTeamBtn" type="button"
+                  style="margin-top:14px;display:inline-flex;align-items:center;gap:8px;background:var(--blue-tint,#E7EEF4);color:var(--blue);border:1px solid var(--blue);border-radius:999px;padding:9px 16px;font-weight:700;font-size:13px;cursor:pointer">
+            ${icon('refresh', 16, 'var(--blue)', 2)} Change team
+          </button>` : ''}
       </div>
 
       <div class="stats">
@@ -575,8 +581,7 @@ function renderHome() {
 
 function wireHome() {
   const btn = document.getElementById('dialBtn');
-  if (!btn) return;
-  btn.addEventListener('click', () => {
+  if (btn) btn.addEventListener('click', () => {
     if (!state.home) return;
     if (state.home.status === 'in') {
       // LN + Assistant must fill the end-of-day report before clocking
@@ -592,6 +597,30 @@ function wireHome() {
       openNoteSheet('in');
     }
   });
+  // "Change team" button — visible only when single-pick designations
+  // are clocked in. Opens the picker pre-selected on their current team.
+  const chg = document.getElementById('changeTeamBtn');
+  if (chg) chg.addEventListener('click', () => {
+    if (!state.home || state.home.status !== 'in') return;
+    openChangeTeamSheet();
+  });
+}
+
+function openChangeTeamSheet() {
+  const cur = (state.home && state.home.lastNote) || '';
+  // Pre-tick the current team so single-tap on a different one is
+  // unambiguous. value is still an array so the rest of the picker
+  // wiring doesn't need branching.
+  const preselect = CLOCK_CAMPAIGNS.includes(cur) ? [cur] : [];
+  state.sheet = {
+    type: 'note',
+    mode: 'change-team',
+    direction: 'in',          // direction-irrelevant; CTA wording is mode-driven
+    value: preselect,
+    filter: '',
+    fromTeam: cur,            // remembered so submit can warn if same picked
+  };
+  render();
 }
 
 function greetingFor(d) {
@@ -630,6 +659,17 @@ function _splitNote(s) {
     .filter(Boolean);
 }
 
+// Fancy, RM, and LN callers commit to ONE team at a time — if they
+// switch teams mid-shift they tap "Change team" which fires a synthetic
+// clock-out + clock-in pair so payroll splits hours by actual minutes
+// per team, not by an even-split estimate.
+// Assistants keep the multi-team picker for shifts that genuinely run
+// across teams in parallel (e.g. cross-team admin/onboarding work).
+function _isSinglePick() {
+  const d = String((state.agent && state.agent.designation) || '').toLowerCase();
+  return d === 'rm' || d === 'fancy' || d === 'ln';
+}
+
 function openNoteSheet(direction = 'in') {
   // direction = 'in' | 'out' — which clock action follows submission.
   // Preselect whatever they picked last time so the common case is
@@ -642,6 +682,11 @@ function openNoteSheet(direction = 'in') {
 }
 
 async function submitClock(action) {
+  // Change-team mode: synthesise an out + in pair so payroll splits
+  // hours by actual minutes rather than the even-split estimate.
+  if (state.sheet && state.sheet.mode === 'change-team') {
+    return submitChangeTeam();
+  }
   // Multi-select now: value is an array. Join with ' & ' which the
   // payroll algorithm already splits on (spec §4.1), so hours auto-
   // split evenly across each picked team.
@@ -694,6 +739,48 @@ async function submitClock(action) {
       state.error = msg;
       render();
     }
+  }
+}
+
+// Mid-shift team switch — synthesise an OUT for the current team's
+// segment + an immediate IN for the new team. Payroll algorithm gets
+// per-segment notes so hours bill to actual minutes per team.
+async function submitChangeTeam() {
+  const newTeam = Array.isArray(state.sheet.value) && state.sheet.value.length
+    ? String(state.sheet.value[0]).trim()
+    : '';
+  const from = state.sheet.fromTeam || (state.home && state.home.lastNote) || '';
+  if (!newTeam) {
+    state.sheet.error = 'Pick a team to switch to'; render(); return;
+  }
+  if (newTeam === from) {
+    state.sheet.error = `You're already on ${from}. Pick a different team.`;
+    render(); return;
+  }
+  state.sheet.busy = true; state.sheet.error = ''; render();
+  try {
+    // 1) Close the current segment on the OLD team. The `clock` handler
+    //    computes duration_hrs from the last 'in' so payroll attribution
+    //    is exact.
+    await api('clock', {
+      agent_id: state.agent.id,
+      dir: 'out',
+      note: from || newTeam,  // fall back if somehow lastNote is empty
+    });
+    // 2) Immediately open a new segment on the NEW team.
+    await api('clock', {
+      agent_id: state.agent.id,
+      dir: 'in',
+      note: newTeam,
+    });
+    state.sheet = null;
+    showToast(`Switched to ${newTeam} ✓`);
+    await loadHome();
+    render();
+  } catch (e) {
+    state.sheet.busy = false;
+    state.sheet.error = String(e.message || e) + ' — you may need to clock in again manually if your previous shift closed.';
+    render();
   }
 }
 
@@ -933,30 +1020,43 @@ function renderNoteSheet() {
   const picked = new Set(v)
   const filter = (state.sheet.filter || '').trim().toLowerCase();
   const dir = state.sheet.direction || 'in';
+  const mode = state.sheet.mode || (dir === 'in' ? 'clock-in' : 'clock-out');
   const err = state.sheet.error || '';
   const busy = state.sheet.busy || false;
   const goingIn = dir === 'in';
+  const isChangeMode = mode === 'change-team';
+  const singlePick = _isSinglePick() || isChangeMode;
   const items = filter
     ? CLOCK_CAMPAIGNS.filter(c => c.toLowerCase().includes(filter))
     : CLOCK_CAMPAIGNS;
   const ok = v.length > 0;
-  const ctaLabel = busy
-    ? (goingIn ? 'Clocking in…' : 'Clocking out…')
-    : (ok
-        ? (goingIn
-            ? `CONFIRM & CLOCK IN${v.length > 1 ? ` · ${v.length} TEAMS` : ''}`
-            : `CONFIRM & CLOCK OUT${v.length > 1 ? ` · ${v.length} TEAMS` : ''}`)
-        : 'Pick at least one campaign to continue');
-  // Hours-split hint when multiple teams are picked. Mirrors spec §4.4.
-  const splitHint = v.length > 1
+  const busyLabel = isChangeMode ? 'Switching…' : (goingIn ? 'Clocking in…' : 'Clocking out…');
+  const goLabel = isChangeMode
+    ? 'SWITCH TO THIS TEAM'
+    : goingIn
+      ? `CONFIRM & CLOCK IN${!singlePick && v.length > 1 ? ` · ${v.length} TEAMS` : ''}`
+      : `CONFIRM & CLOCK OUT${!singlePick && v.length > 1 ? ` · ${v.length} TEAMS` : ''}`;
+  const pickPrompt = singlePick
+    ? (isChangeMode ? 'Pick the team you are switching to' : 'Pick a team to continue')
+    : 'Pick at least one team to continue';
+  const ctaLabel = busy ? busyLabel : (ok ? goLabel : pickPrompt);
+  // Hours-split hint only in multi-pick mode. In single-pick / change mode
+  // the agent's hours bill to exactly one team.
+  const splitHint = !singlePick && v.length > 1
     ? `<div class="picker-hint" style="font-size:11.5px;color:var(--muted);margin-top:4px">Your shift hours will split evenly across these ${v.length} teams.</div>`
     : '';
-  const selectedChips = v.length
+  // Chip strip only in multi-pick mode. Single-pick uses the ✓ on the
+  // tapped row as the affordance.
+  const selectedChips = !singlePick && v.length
     ? `<div class="picker-selected" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
          <span style="font-size:12px;color:var(--muted);font-weight:700">SELECTED · ${v.length}</span>
          ${v.map(c => `<button class="picker-chip" data-unpick="${escapeHtml(c)}" style="background:var(--blue-tint,#E7EEF4);color:var(--blue);border:1px solid var(--blue);font-size:12px;font-weight:700;padding:3px 9px;border-radius:14px;display:inline-flex;align-items:center;gap:5px">${escapeHtml(c)}<span aria-hidden="true">×</span></button>`).join('')}
        </div>${splitHint}`
     : '';
+  const title = isChangeMode ? 'Change team' : 'What are you working on?';
+  const reqLine = singlePick
+    ? (isChangeMode ? 'Pick the new team — your hours so far stay on the previous team' : 'Required · pick one team')
+    : 'Required · tap one or more — hours split evenly';
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
     <div class="sheet sheet-picker">
@@ -964,8 +1064,8 @@ function renderNoteSheet() {
       <div style="display:flex;align-items:center;gap:9px">
         ${icon('clipboard', 22, 'var(--blue)')}
         <div>
-          <h2>What are you working on?</h2>
-          <div class="req">Required · tap one or more — hours split evenly</div>
+          <h2>${title}</h2>
+          <div class="req">${reqLine}</div>
         </div>
       </div>
       <input id="sheetSearch" class="picker-search" type="search"
@@ -976,7 +1076,7 @@ function renderNoteSheet() {
       </div>
       ${selectedChips}
       <div id="sheetErr" class="banner" style="${err ? '' : 'display:none'};margin-top:10px;margin-bottom:0">${escapeHtml(err)}</div>
-      <button class="btn-cta ${ok && !busy ? (goingIn ? 'ok' : 'red') : 'disabled'}" id="sheetGo">${ctaLabel}</button>
+      <button class="btn-cta ${ok && !busy ? (goingIn || isChangeMode ? 'ok' : 'red') : 'disabled'}" id="sheetGo">${ctaLabel}</button>
     </div>
   </div>`;
 }
@@ -1123,15 +1223,29 @@ function wireSheet() {
       });
     };
     const bindPickerItems = () => {
+      const isChangeMode = state.sheet.mode === 'change-team';
+      const singlePick = _isSinglePick() || isChangeMode;
       document.querySelectorAll('.picker-item').forEach(b => {
         b.addEventListener('click', () => {
           const v = b.dataset.pick;
-          const cur = Array.isArray(state.sheet.value) ? state.sheet.value : [];
-          const isOn = cur.includes(v);
-          state.sheet.value = isOn ? cur.filter(x => x !== v) : [...cur, v];
-          // Toggle just this item visually — leave the rest alone.
-          b.classList.toggle('on', !isOn);
-          b.textContent = v + (!isOn ? ' ✓' : '');
+          if (singlePick) {
+            // Single-pick: each tap REPLACES the current selection.
+            // Clear ticks on every row, then mark just this one.
+            state.sheet.value = [v];
+            document.querySelectorAll('.picker-item').forEach(x => {
+              x.classList.remove('on');
+              x.textContent = x.dataset.pick;
+            });
+            b.classList.add('on');
+            b.textContent = v + ' ✓';
+          } else {
+            // Multi-pick: toggle inclusion.
+            const cur = Array.isArray(state.sheet.value) ? state.sheet.value : [];
+            const isOn = cur.includes(v);
+            state.sheet.value = isOn ? cur.filter(x => x !== v) : [...cur, v];
+            b.classList.toggle('on', !isOn);
+            b.textContent = v + (!isOn ? ' ✓' : '');
+          }
           refreshSelectedAndCTA();
         });
       });
