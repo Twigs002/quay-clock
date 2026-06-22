@@ -182,13 +182,24 @@ const handlers = {
   async events(payload) {
     const w = payload.from || startOfWeek(new Date()).toISOString();
     const e = payload.to   || endOfWeek(new Date()).toISOString();
-    let q = sb.from('events')
-      .select('id, ts, staff_id, dir, note, duration_hrs, staff:staff_id(name)')
-      .gte('ts', w).lte('ts', e).order('ts', { ascending: true });
-    if (payload.agent_id) q = q.eq('staff_id', String(payload.agent_id).toLowerCase());
-    const { data, error } = await q;
-    if (error) return { ok: false, error: error.message };
-    const events = (data || []).map((r) => ({
+    // PostgREST caps unbounded selects at 1000 rows. A full pay cycle can
+    // exceed that (~50 events/day × 31 days ≈ 1500), so paginate until done.
+    const PAGE = 1000;
+    const rows = [];
+    for (let offset = 0; ; offset += PAGE) {
+      let q = sb.from('events')
+        .select('id, ts, staff_id, dir, note, duration_hrs, staff:staff_id(name)')
+        .gte('ts', w).lte('ts', e)
+        .order('ts', { ascending: true })
+        .range(offset, offset + PAGE - 1);
+      if (payload.agent_id) q = q.eq('staff_id', String(payload.agent_id).toLowerCase());
+      const { data, error } = await q;
+      if (error) return { ok: false, error: error.message };
+      if (!data || !data.length) break;
+      rows.push(...data);
+      if (data.length < PAGE) break;
+    }
+    const events = rows.map((r) => ({
       ts: r.ts,
       id: r.staff_id,
       name: r.staff?.name || '',
