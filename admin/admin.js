@@ -721,7 +721,7 @@ function renderTimesheetsGrid(range) {
   const events = state.data.tsEvents || [];
   const roster = state.data.roster || [];
   const isMonth = range.kind === 'month';
-  const cols = isMonth ? monthlyBuckets(range) : weeklyBuckets();
+  const cols = isMonth ? monthlyBuckets(range) : weeklyBuckets(range);
   const grid = {};
   roster.forEach(a => { grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0), total: 0, days: {} }; });
   events.forEach(e => {
@@ -904,8 +904,13 @@ function renderTimesheetsList(range) {
   </div>`;
 }
 
-function weeklyBuckets() {
-  const sow = startOfWeek(new Date());
+function weeklyBuckets(range) {
+  // Anchor buckets to the SELECTED period's Monday so Last Week / custom
+  // weeks render their own days. Without `range` we'd silently bucket the
+  // current week's columns over any other period — events fall outside
+  // and the grid renders 0:00 everywhere.
+  const anchor = range ? new Date(range.from) : new Date();
+  const sow = startOfWeek(anchor);
   const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   return days.map((label, i) => {
     const d = new Date(sow); d.setDate(d.getDate() + i);
@@ -1745,7 +1750,7 @@ function exportTimesheetsCSV() {
   }
   const events = state.data.tsEvents || [];
   const roster = state.data.roster || [];
-  const cols = range.kind === 'month' ? monthlyBuckets(range) : weeklyBuckets();
+  const cols = range.kind === 'month' ? monthlyBuckets(range) : weeklyBuckets(range);
   const grid = {};
   roster.forEach(a => { grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0) }; });
   events.forEach(e => {
