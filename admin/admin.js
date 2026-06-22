@@ -121,8 +121,8 @@ function fmtDateShort(d) { return d.toLocaleDateString('en-GB', { weekday: 'shor
 function initials(name) {
   return (name || '').split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
 }
-const AV = ['#3D5BA6','#D20A03','#1FA463','#7A5AB6','#C8920A','#2F8FB3'];
-const avColor = () => AV[0];
+const AV = ['#3D5BA6','#1E3A8A','#3F7BC4','#2F8FB3'];
+const avColor = (i) => AV[(i || 0) % AV.length];
 function startOfWeek(d) {
   const x = new Date(d); const day = (x.getDay() + 6) % 7;
   x.setHours(0,0,0,0); x.setDate(x.getDate() - day); return x;
