@@ -663,15 +663,13 @@ function _splitNote(s) {
     .filter(Boolean);
 }
 
-// Fancy, RM, and LN callers commit to ONE team at a time — if they
-// switch teams mid-shift they tap "Change team" which fires a synthetic
-// clock-out + clock-in pair so payroll splits hours by actual minutes
-// per team, not by an even-split estimate.
-// Assistants keep the multi-team picker for shifts that genuinely run
-// across teams in parallel (e.g. cross-team admin/onboarding work).
+// All designations commit to ONE team at a time. To switch mid-shift they
+// tap "Change team", which fires a synthetic clock-out + clock-in pair so
+// payroll splits hours by actual minutes per team (not by an even-split
+// estimate). Assistants previously had a multi-team picker; reverted
+// 2026-06-23 — everyone now uses the single-pick + Change-team flow.
 function _isSinglePick() {
-  const d = String((state.agent && state.agent.designation) || '').toLowerCase();
-  return d === 'rm' || d === 'fancy' || d === 'ln';
+  return true;
 }
 
 // Confirm-clock-out sheet. Staff have been accidentally tapping the big
@@ -1009,9 +1007,12 @@ function renderForgotSheet() {
         <button class="btn small" data-fg-quick="17:00">5 PM that day</button>
         <button class="btn small" data-fg-quick="now">Now</button>
       </div>
+      <div style="margin-top:14px;padding:10px 12px;border-radius:8px;background:var(--paper);font-size:12px;line-height:1.55;color:var(--slate)">
+        We'll clock you out at the <b>current time</b> and send a correction request to an admin to amend it to the time above.
+      </div>
       ${f.error ? `<div class="banner" style="margin-top:10px">${escapeHtml(f.error)}</div>` : ''}
       <button class="btn-cta ${busy ? 'disabled' : 'ok'}" id="sheetGo" style="margin-top:16px">
-        ${busy ? 'Saving…' : 'CLOCK OUT AT THIS TIME'}
+        ${busy ? 'Sending…' : 'CLOCK OUT NOW · REQUEST CORRECTION'}
       </button>
       <button class="btn-cta" id="fgStillHere" style="margin-top:8px;background:var(--paper);color:var(--ink)">
         I'm actually still on the clock
@@ -1021,6 +1022,12 @@ function renderForgotSheet() {
 }
 
 async function submitForgotClockOut() {
+  // 2026-06-23: self-service clock_correction was REMOVED. The actual
+  // clock-out time must be recorded (real now), and any earlier time the
+  // staffer would have preferred must go through the requests flow so an
+  // admin reviews it. Two-step submit:
+  //   1) clock them out at NOW (real timestamp recorded)
+  //   2) file a 'Time correction' request with the proposed earlier time
   const f = state.sheet;
   if (!f || f.busy) return;
   const ts = new Date(`${f.date}T${f.time}:00`);
@@ -1035,13 +1042,26 @@ async function submitForgotClockOut() {
   }
   f.busy = true; f.error = ''; render();
   try {
-    const res = await api('clock_correction', {
-      ts: ts.toISOString(),
-      note: 'Auto-corrected: forgot to clock out',
+    const outRes = await api('clock', {
+      agent_id: state.agent.id, dir: 'out',
+      note: 'Auto clock-out after long shift — correction requested',
     });
-    if (!res || res.ok === false) throw new Error(res && res.error || 'Could not save');
+    if (!outRes || outRes.ok === false) {
+      throw new Error(outRes && outRes.error || 'Could not clock out');
+    }
+    const reqRes = await api('leave_create', {
+      agent_id: state.agent.id,
+      type: 'Time correction',
+      start: f.date,
+      end: f.date,
+      proposed_end: f.time,
+      reason: 'Forgot to clock out — requesting recorded end-time be set to ' + f.time,
+    });
+    if (!reqRes || reqRes.ok === false) {
+      throw new Error(reqRes && reqRes.error || 'Could not file correction request');
+    }
     state.sheet = null;
-    showToast('Saved ✓ — clocked out at ' + f.time);
+    showToast('Clocked out · correction request sent for admin review');
     await loadHome();
     render();
   } catch (e) {
