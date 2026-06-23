@@ -686,15 +686,15 @@ function _splitNote(s) {
     .filter(Boolean);
 }
 
-// Fancy, RM, and LN callers commit to ONE team at a time — if they
-// switch teams mid-shift they tap "Change team" which fires a synthetic
-// clock-out + clock-in pair so payroll splits hours by actual minutes
-// per team, not by an even-split estimate.
-// Assistants keep the multi-team picker for shifts that genuinely run
-// across teams in parallel (e.g. cross-team admin/onboarding work).
+// Single-team-pick is the DEFAULT for every designation — staff commit to
+// one team at clock-in and tap "Change team" to switch mid-shift (fires a
+// synthetic clock-out + clock-in pair so payroll splits hours by actual
+// minutes per team, not by an even-split estimate).
+// Only Assistants keep the multi-team picker for shifts that genuinely run
+// across teams in parallel (cross-team admin / onboarding work).
 function _isSinglePick() {
   const d = String((state.agent && state.agent.designation) || '').toLowerCase();
-  return d === 'rm' || d === 'fancy' || d === 'ln';
+  return d !== 'assistant';
 }
 
 // Confirm-clock-out sheet. Staff have been accidentally tapping the big
