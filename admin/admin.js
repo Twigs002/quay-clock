@@ -37,6 +37,7 @@ const state = {
   tsPeriod: 'this-week', // this-week | last-week | this-month | last-month
   tsLayout: 'grid',      // grid (per-day matrix) | list (flat Connecteam-style shifts)
   tsDetail: null,        // { agentId, agentName } when detail modal open
+  showArchived: false,   // Team view: include archived (active=false) staff
 };
 
 const $root = document.getElementById('admin');
@@ -241,7 +242,10 @@ async function loadAll() {
       api('team_today', {}),
       api('summary', { from, to }),
       api('leave_list', {}),
-      api('roster', {}),
+      // Admin always loads the FULL roster so archived staff's historical
+      // clocks still aggregate in timesheets/payroll. The Team view filters
+      // for display via state.showArchived.
+      api('roster', { include_inactive: true }),
       api('events', { from, to }),
     ]);
     state.data.team = team.team || [];
@@ -1447,43 +1451,56 @@ function wireLeave() {
 
 // ───── TEAM ──────────────────────────────────────────────────────────
 function renderTeam() {
-  const roster = state.data.roster || [];
+  const fullRoster = state.data.roster || [];
   // Live overlay so each card surfaces what team this person is currently
   // clocked into — same source the dashboard uses, including managers and
   // assistants. Lets the Team page show "Sheldon → Bulls" at a glance.
   const liveById = new Map((state.data.team || []).map(t => [t.id, t]));
-  const canAddStaff = !!(state.admin && state.admin.admin === true && state.admin.super !== false && (state.admin.super || state.admin.is_super));
+  const isSuper = !!(state.admin && (state.admin.super || state.admin.is_super));
+  const archivedCount = fullRoster.filter(s => s.active === false).length;
+  // The Team view filters the FULL roster for display; the underlying data
+  // (including archived) stays available to timesheets/payroll surfaces.
+  const roster = state.showArchived ? fullRoster : fullRoster.filter(s => s.active !== false);
   return `
-    <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
-      ${state.admin && (state.admin.super || state.admin.is_super)
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap">
+      <label class="show-arch" style="display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--slate);cursor:pointer">
+        <input type="checkbox" id="showArchived" ${state.showArchived ? 'checked' : ''}>
+        Show archived${state.showArchived && archivedCount ? ` (${archivedCount})` : ''}
+      </label>
+      ${isSuper
         ? `<button class="btn primary small" id="addStaffBtn">+ Add staff</button>`
         : `<span class="muted" style="font-size:12.5px">Only superusers can add staff.</span>`}
     </div>
     <div class="team-grid">
-      ${roster.length === 0 ? `<div class="empty card" style="grid-column:1/-1">No staff yet${state.admin && (state.admin.super || state.admin.is_super) ? ' — click <b>+ Add staff</b> to add your first.' : ' — ask a superuser to add them.'}</div>` : ''}
+      ${roster.length === 0 ? `<div class="empty card" style="grid-column:1/-1">No staff yet${isSuper ? ' — click <b>+ Add staff</b> to add your first.' : ' — ask a superuser to add them.'}</div>` : ''}
       ${roster.map((s, i) => {
         const rate = s.hourly_rate != null ? `R${Number(s.hourly_rate).toFixed(2)}/hr` : 'No rate set';
         const hrs = s.weekly_hours != null ? `${Number(s.weekly_hours)}h/week` : 'No target';
         const live = liveById.get(s.id);
         const currentTeam = (live && live.status === 'in') ? (live.note || '').trim() : '';
-        return `<div class="card team-card" data-search="${escapeHtml(((s.name||'') + ' ' + (s.id||'')).toLowerCase())}">
+        const isArchived = s.active === false;
+        const archAction = isArchived
+          ? `<button class="btn small" data-unarchive-staff="${escapeHtml(s.id)}" title="Re-enable login for this staff member">Unarchive</button>`
+          : `<button class="btn small" data-archive-staff="${escapeHtml(s.id)}" data-staff-name="${escapeHtml(s.name)}" title="Disable login but keep historical clocks">Archive</button>`;
+        return `<div class="card team-card${isArchived ? ' team-card-archived' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.id||'')).toLowerCase())}">
           <div class="top">
-            <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px">${initials(s.name)}</div>
+            <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px${isArchived ? ';filter:grayscale(100%);opacity:.65' : ''}">${initials(s.name)}</div>
             <div style="min-width:0;flex:1">
               <div class="name">${escapeHtml(s.name)}${s.super
                 ? ' <span style="font-size:10px;background:var(--blue);color:#fff;padding:2px 6px;border-radius:6px;vertical-align:middle">SUPER</span>'
-                : (s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : '')}</div>
+                : (s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : '')}${isArchived ? ' <span style="font-size:10px;background:#E0E4EC;color:#5A6473;padding:2px 6px;border-radius:6px;vertical-align:middle">ARCHIVED</span>' : ''}</div>
             </div>
             <button class="btn small" data-edit-staff="${escapeHtml(s.id)}">Edit</button>
           </div>
           <div style="margin-top:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            ${tagFor(s.status)}
-            ${currentTeam ? `<span class="team-on" title="Currently working on">${icon('clipboard', 12, 'var(--blue)')}<span>${escapeHtml(currentTeam)}</span></span>` : ''}
+            ${isArchived ? `<span class="pill" style="background:#E0E4EC;color:#5A6473;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700">Cannot log in</span>` : tagFor(s.status)}
+            ${!isArchived && currentTeam ? `<span class="team-on" title="Currently working on">${icon('clipboard', 12, 'var(--blue)')}<span>${escapeHtml(currentTeam)}</span></span>` : ''}
           </div>
           <div class="meta">
             <div class="li">${icon('users', 14, 'var(--muted)')}@${escapeHtml(s.id || '—')}</div>
             <div class="li">${icon('clock', 14, 'var(--muted)')}${escapeHtml(rate)} · ${escapeHtml(hrs)}</div>
           </div>
+          ${isSuper ? `<div style="margin-top:12px;display:flex;justify-content:flex-end">${archAction}</div>` : ''}
         </div>`;
       }).join('')}
     </div>
@@ -1512,10 +1529,41 @@ function wireTeam() {
       weekly_hours: s.weekly_hours != null ? String(s.weekly_hours) : '',
       designation: s.designation || '',
       division: s.division || '',
-      active: true, error: '', busy: false,
+      active: s.active !== false, error: '', busy: false,
     };
     render();
   }));
+
+  // "Show archived" toggle — just flips the display filter; the roster
+  // already contains everyone (boot loads with include_inactive=true).
+  const showArch = document.getElementById('showArchived');
+  if (showArch) showArch.addEventListener('change', () => {
+    state.showArchived = !!showArch.checked;
+    render();
+  });
+
+  // Archive / Unarchive — staff stays in the DB so their historical clock
+  // events still count for payroll, but `active=false` blocks login (see
+  // quay-data.js login handler) and hides them from PWA roster surfaces.
+  const flipActive = async (id, name, active, btn) => {
+    if (!active && name && !confirm(`Archive ${name}? They won't be able to log in. Historical clocks stay in payroll.`)) return;
+    btn.disabled = true; btn.textContent = active ? 'Unarchiving…' : 'Archiving…';
+    const res = await api('roster_set_active', { id, active });
+    if (!res || res.ok === false) {
+      alert('Could not update: ' + (res && res.error || 'unknown error'));
+      btn.disabled = false; btn.textContent = active ? 'Unarchive' : 'Archive';
+      return;
+    }
+    // Mutate the in-memory row so we re-render without a network round-trip.
+    const row = (state.data.roster || []).find(x => x.id === id);
+    if (row) row.active = active;
+    render();
+  };
+  document.querySelectorAll('button[data-archive-staff]').forEach(b => b.addEventListener('click', () =>
+    flipActive(b.dataset.archiveStaff, b.dataset.staffName || b.dataset.archiveStaff, false, b)));
+  document.querySelectorAll('button[data-unarchive-staff]').forEach(b => b.addEventListener('click', () =>
+    flipActive(b.dataset.unarchiveStaff, null, true, b)));
+
   if (state.staffModal) wireStaffModal();
 }
 

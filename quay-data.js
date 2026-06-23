@@ -226,11 +226,13 @@ const handlers = {
     return { ok: true, summary };
   },
 
-  async roster() {
-    const { data, error } = await sb.from('staff')
-      .select('*')
-      .eq('active', true)
-      .order('name', { ascending: true });
+  async roster(payload = {}) {
+    // include_inactive=true returns archived (active=false) staff as well,
+    // used by the admin Team page so admins can unarchive someone. Defaults
+    // to false so PWA / dashboard surfaces never see disabled accounts.
+    let q = sb.from('staff').select('*').order('name', { ascending: true });
+    if (!payload.include_inactive) q = q.eq('active', true);
+    const { data, error } = await q;
     if (error) return { ok: false, error: error.message };
     // Decorate each row with its current status (one query per agent — fine
     // for a small office; the table itself returned fast).
@@ -244,11 +246,14 @@ const handlers = {
         division: s.division || '',
         hourly_rate:  s.hourly_rate  != null ? Number(s.hourly_rate)  : null,
         weekly_hours: s.weekly_hours != null ? Number(s.weekly_hours) : null,
+        active: s.active !== false,
         status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
         lastNote: st.lastNote,
       };
     }));
     roster.sort((a, b) => {
+      // Archived rows always sink to the bottom regardless of clock status.
+      if (a.active !== b.active) return a.active ? -1 : 1;
       if (a.status !== b.status) return a.status === 'in' ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
