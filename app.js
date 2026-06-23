@@ -641,7 +641,7 @@ const CLOCK_CAMPAIGNS = [
   'Amigos', 'Assassins', 'Avengers', 'Babes', 'Ballers', 'Bergscape Asb Calling',
   'Betties', 'Blitz', 'Boets', 'Bulls', 'Cavaliers', 'Chargers', 'City Sunsets',
   'Clienthub Nelio Assistant', 'Conquerors', 'Dealers', 'Dealmakers', 'Dixies',
-  'Dolphins', 'Donkeys', 'Dragons', 'Dutchmen', 'Falcons', 'Farmers', 'Furys',
+  'Dolphins', 'Donkeys', 'Dragons', 'Dutchmen', 'Engine Room', 'Falcons', 'Farmers', 'Furys',
   'Gladiators', 'Goal Diggers', 'Gunslingers', 'Hawks', 'Headbangers', 'Hoekers',
   'Hooligans', 'Hout Baes', 'Huntsmen', 'Hustlers', 'Invincibles', 'Jaguars',
   'Knights', 'Koeksisters', 'Komorants', 'Lions', 'Llamas', 'Musketeers',
@@ -663,13 +663,15 @@ function _splitNote(s) {
     .filter(Boolean);
 }
 
-// All designations commit to ONE team at a time. To switch mid-shift they
-// tap "Change team", which fires a synthetic clock-out + clock-in pair so
-// payroll splits hours by actual minutes per team (not by an even-split
-// estimate). Assistants previously had a multi-team picker; reverted
-// 2026-06-23 — everyone now uses the single-pick + Change-team flow.
+// Fancy, RM, and LN callers commit to ONE team at a time — if they
+// switch teams mid-shift they tap "Change team" which fires a synthetic
+// clock-out + clock-in pair so payroll splits hours by actual minutes
+// per team, not by an even-split estimate.
+// Assistants keep the multi-team picker for shifts that genuinely run
+// across teams in parallel (e.g. cross-team admin/onboarding work).
 function _isSinglePick() {
-  return true;
+  const d = String((state.agent && state.agent.designation) || '').toLowerCase();
+  return d === 'rm' || d === 'fancy' || d === 'ln';
 }
 
 // Confirm-clock-out sheet. Staff have been accidentally tapping the big
