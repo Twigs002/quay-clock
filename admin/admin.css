@@ -76,13 +76,7 @@ html.embed, html.embed body { background: var(--paper); }
   color: #fff;
 }
 .sidebar .logo { padding: 4px 8px 22px; }
-.sidebar .logo img {
-  width: 150px; height: auto; display: block;
-  /* Crop the signal-flag row baked into the brand PNG (bottom ~38%) so
-     the admin chrome shows the wordmark only. Mirrors the PWA treatment. */
-  aspect-ratio: 1776 / 503;
-  object-fit: cover; object-position: top center;
-}
+.sidebar .logo img { width: 150px; height: auto; display: block; }
 .sidebar .section {
   font-size: 10.5px; font-weight: 700; color: rgba(255,255,255,0.4);
   letter-spacing: 1px; padding: 0 10px 8px;
@@ -369,11 +363,7 @@ td.reason-cell.details-open .reason-text {
   background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
   border-radius: 22px; text-align: center;
 }
-.gate img {
-  width: 180px; margin: 0 auto 18px; display: block;
-  aspect-ratio: 1776 / 503;
-  object-fit: cover; object-position: top center;
-}
+.gate img { width: 180px; margin: 0 auto 18px; display: block; }
 .gate h2 { color: #fff; font-size: 18px; font-weight: 800; margin-bottom: 4px; }
 .gate .sub { color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 500; margin-bottom: 22px; }
 .gate .gate-user {

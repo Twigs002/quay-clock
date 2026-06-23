@@ -53,25 +53,14 @@ button { border: none; background: none; cursor: pointer; }
   flex-shrink: 0;
 }
 .hdr-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-/* Quay 1 brand mark: the source PNG bakes a row of signal flags in the
-   bottom ~38%. The clock app intentionally hides those — the brand owners
-   asked for the wordmark only here. Achieved with aspect-ratio + cover so
-   no separate cropped image asset is needed; revert by removing the
-   aspect-ratio / object-* lines on these three selectors. */
-.hdr-logo {
-  height: 30px; width: auto; display: block;
-  aspect-ratio: 1776 / 503;
-  object-fit: cover; object-position: top center;
-}
-.hdr-logo-center {
-  display: flex; justify-content: center;
-  padding-top: 6px; padding-bottom: 4px;
-}
-.hdr-logo-center img {
-  width: 150px; height: auto; display: block;
-  aspect-ratio: 1776 / 503;
-  object-fit: cover; object-position: top center;
-}
+/* Quay 1 brand mark removed from the clock PWA chrome per user request
+   2026-06-23. The <img> elements are still in the templates but hidden;
+   their containers collapse to zero where they had padding so the header
+   shows clean space. To restore, remove these display:none rules and the
+   .hdr-logo-center { display: none } below. */
+.hdr-logo { display: none; }
+.hdr-logo-center { display: none; }
+.hdr-logo-center img { display: none; }
 
 /* #25 — Desktop: centre the Quay 1 logo lock-up on Home + Team pages.
  * Mobile (<768px) keeps the existing layouts untouched. */
@@ -440,11 +429,7 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
   color: #fff;
 }
 .login .top { display: flex; flex-direction: column; align-items: center; gap: 18px; padding-top: 20px; }
-.login .top img {
-  width: 200px; height: auto;
-  aspect-ratio: 1776 / 503;
-  object-fit: cover; object-position: top center;
-}
+.login .top img { display: none; }
 .login .top .tag {
   font-family: 'Permanent Marker', cursive; font-size: 16px; color: var(--yellow);
   letter-spacing: 0.5px;
