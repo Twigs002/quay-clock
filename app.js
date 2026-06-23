@@ -637,20 +637,43 @@ function firstName(n) { return String(n || '').split(/\s+/)[0]; }
 
 // Canonical list of campaigns / things a staff member could be working on
 // when they clock in or out. Edited here, used by the picker sheet.
-const CLOCK_CAMPAIGNS = [
-  'Amigos', 'Assassins', 'Avengers', 'Babes', 'Ballers', 'Bergscape Asb Calling',
-  'Betties', 'Blitz', 'Boets', 'Bulls', 'Cavaliers', 'Chargers', 'City Sunsets',
-  'Clienthub Nelio Assistant', 'Conquerors', 'Dealers', 'Dealmakers', 'Dixies',
-  'Dolphins', 'Donkeys', 'Dragons', 'Dutchmen', 'Engine Room', 'Falcons', 'Farmers', 'Furys',
-  'Gladiators', 'Goal Diggers', 'Gunslingers', 'Hawks', 'Headbangers', 'Hoekers',
-  'Hooligans', 'Hout Baes', 'Huntsmen', 'Hustlers', 'Invincibles', 'Jaguars',
-  'Knights', 'Koeksisters', 'Komorants', 'Lions', 'Llamas', 'Musketeers',
-  'Panthers', 'Pirates', 'Power Rangers', 'Prom Queens', 'Proteas',
-  'Public Holiday', 'Raccoons', 'Rebels', 'Roche Assistant', 'Rockets',
-  'Samurais', 'Slayers', 'Soccer Moms', 'Spartans', 'Surfers', 'Swesties',
-  'Targaryens', 'Tigers', 'TNT', 'Tornadoes', 'Vikings', 'Vipers', 'Warriors',
-  'Weasels', 'Wizards', 'Wolves', 'Wombats',
+//
+// Each entry can be `{ name }` (active) or `{ name, archived: true }`
+// (retired). Archived teams are HIDDEN from the clock-in/out picker, but
+// their name is still recognised when parsing existing notes — so historical
+// timesheets and payroll keep rendering correctly and the team's stored
+// clock hours still count.
+//
+// To retire a team: set `archived: true` on its row below (don't delete it,
+// or its historical rows will lose their pre-select).
+const CLOCK_CAMPAIGNS_ALL = [
+  { name: 'Amigos' }, { name: 'Assassins' }, { name: 'Avengers' }, { name: 'Babes' },
+  { name: 'Ballers' }, { name: 'Bergscape Asb Calling' }, { name: 'Betties' },
+  { name: 'Blitz' }, { name: 'Boets' }, { name: 'Bulls' }, { name: 'Cavaliers' },
+  { name: 'Chargers' }, { name: 'City Sunsets' }, { name: 'Clienthub Nelio Assistant' },
+  { name: 'Conquerors' }, { name: 'Dealers' }, { name: 'Dealmakers' }, { name: 'Dixies' },
+  { name: 'Dolphins' }, { name: 'Donkeys' }, { name: 'Dragons' }, { name: 'Dutchmen' },
+  { name: 'Engine Room' }, { name: 'Falcons' }, { name: 'Farmers' }, { name: 'Furys' },
+  { name: 'Gladiators' }, { name: 'Goal Diggers' }, { name: 'Gunslingers' },
+  { name: 'Hawks' }, { name: 'Headbangers' }, { name: 'Hoekers' }, { name: 'Hooligans' },
+  { name: 'Hout Baes' }, { name: 'Huntsmen' }, { name: 'Hustlers' }, { name: 'Invincibles' },
+  { name: 'Jaguars' }, { name: 'Knights' }, { name: 'Koeksisters' }, { name: 'Komorants' },
+  { name: 'Lions' }, { name: 'Llamas' }, { name: 'Musketeers' }, { name: 'Panthers' },
+  { name: 'Pirates' }, { name: 'Power Rangers' }, { name: 'Prom Queens' },
+  { name: 'Proteas' }, { name: 'Public Holiday' }, { name: 'Raccoons' },
+  { name: 'Rebels' }, { name: 'Roche Assistant' }, { name: 'Rockets' },
+  { name: 'Samurais' }, { name: 'Slayers' }, { name: 'Soccer Moms' },
+  { name: 'Spartans' }, { name: 'Surfers' }, { name: 'Swesties' }, { name: 'Targaryens' },
+  { name: 'Tigers' }, { name: 'TNT' }, { name: 'Tornadoes' }, { name: 'Vikings' },
+  { name: 'Vipers' }, { name: 'Warriors' }, { name: 'Weasels' }, { name: 'Wizards' },
+  { name: 'Wolves' }, { name: 'Wombats' },
 ];
+
+// Active picker list — what staff actually see when clocking in/out.
+const CLOCK_CAMPAIGNS = CLOCK_CAMPAIGNS_ALL.filter(c => !c.archived).map(c => c.name);
+// Full set including archived — used for note-parsing / pre-select so
+// historical entries keep working even after a team is retired.
+const CLOCK_CAMPAIGNS_KNOWN = new Set(CLOCK_CAMPAIGNS_ALL.map(c => c.name));
 
 // Split a saved note ("Ballers & Targaryens", "Spartans, Tigers", etc.)
 // back into individual campaign names for the multi-select preselect.
