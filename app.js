@@ -647,10 +647,10 @@ function firstName(n) { return String(n || '').split(/\s+/)[0]; }
 // To retire a team: set `archived: true` on its row below (don't delete it,
 // or its historical rows will lose their pre-select).
 const CLOCK_CAMPAIGNS_ALL = [
-  { name: 'Amigos' }, { name: 'Assassins' }, { name: 'Avengers' }, { name: 'Babes' },
-  { name: 'Ballers' }, { name: 'Bergscape Asb Calling' }, { name: 'Betties' },
+  { name: 'ASB Calling' }, { name: 'Amigos' }, { name: 'Assassins' }, { name: 'Avengers' },
+  { name: 'Babes' }, { name: 'Ballers' }, { name: 'Bergscape' }, { name: 'Betties' },
   { name: 'Blitz' }, { name: 'Boets' }, { name: 'Bulls' }, { name: 'Cavaliers' },
-  { name: 'Chargers' }, { name: 'City Sunsets' }, { name: 'Clienthub Nelio Assistant' },
+  { name: 'Chargers' }, { name: 'City Sunsets' }, { name: 'Clienthub' },
   { name: 'Conquerors' }, { name: 'Dealers' }, { name: 'Dealmakers' }, { name: 'Dixies' },
   { name: 'Dolphins' }, { name: 'Donkeys' }, { name: 'Dragons' }, { name: 'Dutchmen' },
   { name: 'Engine Room' }, { name: 'Falcons' }, { name: 'Farmers' }, { name: 'Furys' },
@@ -660,13 +660,19 @@ const CLOCK_CAMPAIGNS_ALL = [
   { name: 'Jaguars' }, { name: 'Knights' }, { name: 'Koeksisters' }, { name: 'Komorants' },
   { name: 'Lions' }, { name: 'Llamas' }, { name: 'Musketeers' }, { name: 'Panthers' },
   { name: 'Pirates' }, { name: 'Power Rangers' }, { name: 'Prom Queens' },
-  { name: 'Proteas' }, { name: 'Public Holiday' }, { name: 'Raccoons' },
-  { name: 'Rebels' }, { name: 'Roche Assistant' }, { name: 'Rockets' },
-  { name: 'Samurais' }, { name: 'Slayers' }, { name: 'Soccer Moms' },
-  { name: 'Spartans' }, { name: 'Surfers' }, { name: 'Swesties' }, { name: 'Targaryens' },
-  { name: 'Tigers' }, { name: 'TNT' }, { name: 'Tornadoes' }, { name: 'Vikings' },
-  { name: 'Vipers' }, { name: 'Warriors' }, { name: 'Weasels' }, { name: 'Wizards' },
-  { name: 'Wolves' }, { name: 'Wombats' },
+  { name: 'Proteas' }, { name: 'Raccoons' }, { name: 'Rockets' }, { name: 'Samurais' },
+  { name: 'Slayers' }, { name: 'Soccer Moms' }, { name: 'Spartans' },
+  { name: 'Surfers' }, { name: 'Swesties' }, { name: 'Targaryens' }, { name: 'Tigers' },
+  { name: 'TNT' }, { name: 'Tornadoes' }, { name: 'Vikings' }, { name: 'Vipers' },
+  { name: 'Warriors' }, { name: 'Weasels' }, { name: 'Wizards' }, { name: 'Wolves' },
+  { name: 'Wombats' },
+  // Archived — hidden from picker, but kept so historical notes/timesheets
+  // still parse and pre-select correctly.
+  { name: 'Bergscape Asb Calling',     archived: true },
+  { name: 'Clienthub Nelio Assistant', archived: true },
+  { name: 'Public Holiday',            archived: true },
+  { name: 'Rebels',                    archived: true },
+  { name: 'Roche Assistant',           archived: true },
 ];
 
 // Active picker list — what staff actually see when clocking in/out.
@@ -888,7 +894,7 @@ function renderReportSheet() {
   // Currently divisions are free-text against the staff.division field;
   // until we wire a config-driven picker we offer the most common
   // examples + the agent's current value as a datalist.
-  const knownDivisions = ['Engine Room', 'RM', 'Fancy', 'Inbound', 'Outbound'];
+  const knownDivisions = ['Engine Room', 'RM', 'Fancy', 'Rental Support', 'Admin Staff'];
   const divisionOptions = knownDivisions
     .map(d => `<option value="${escapeHtml(d)}"></option>`).join('');
   return `<div class="sheet-wrap" id="sheetWrap">
