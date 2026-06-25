@@ -769,6 +769,19 @@ function renderTimesheetsGrid(range) {
       grid[e.id].days[dayKey] = (grid[e.id].days[dayKey] || 0) + e.duration_hrs;
     }
   });
+  // Absence lookup: "staffId|YYYY-MM-DD" -> {reason, reason_note, ...}.
+  // Drives the Absent pill in empty cells.
+  const absByKey = new Map();
+  (state.data.tsAbsences || []).forEach(a => absByKey.set(`${a.staff_id}|${a.date}`, a));
+  // Per-col date key + weekday flag, computed once.
+  const colMeta = cols.map(c => {
+    const d = new Date(c.from);
+    return {
+      dayKey:    d.toISOString().slice(0, 10),
+      isWeekend: d.getDay() === 0 || d.getDay() === 6,
+      isPast:    c.to < Date.now(),
+    };
+  });
   const rows = Object.entries(grid)
     .filter(([, v]) => v.total > 0 || roster.some(a => a.name === v.name))
     .sort((a, b) => b[1].total - a[1].total);
@@ -796,7 +809,21 @@ function renderTimesheetsGrid(range) {
               <div class="who"><div class="n">${escapeHtml(v.name)}</div><div class="r">${escapeHtml(v.role || '')}</div></div>
             </div>
           </td>
-          ${v.vals.map((h, ci) => `<td class="ctr tnum ${cols[ci].weekend ? 'ts-weekend' : ''}" style="${h ? '' : 'color:var(--muted)'}">${fmtHM(h)}</td>`).join('')}
+          ${v.vals.map((h, ci) => {
+            const cw = cols[ci].weekend ? 'ts-weekend' : '';
+            if (h > 0) {
+              return `<td class="ctr tnum ${cw}">${fmtHM(h)}</td>`;
+            }
+            const ab = absByKey.get(`${id}|${colMeta[ci].dayKey}`);
+            if (ab) {
+              const tip = `Absent · ${escapeHtml(ab.reason)}${ab.reason_note ? ' — ' + escapeHtml(ab.reason_note) : ''}`;
+              return `<td class="ctr ${cw}" title="${tip}"><span class="pill" style="background:#FFE9CB;color:#6B3F00;padding:2px 7px;font-size:10.5px;font-weight:700;letter-spacing:.03em">Absent</span></td>`;
+            }
+            if (colMeta[ci].isPast && !colMeta[ci].isWeekend) {
+              return `<td class="ctr ${cw}" title="No clock-in event and no absence marker"><span class="pill" style="background:#FFE0E0;color:#8B1A1A;padding:2px 7px;font-size:10.5px;font-weight:700;letter-spacing:.03em">No show</span></td>`;
+            }
+            return `<td class="ctr tnum ${cw}" style="color:var(--muted)">${fmtHM(h)}</td>`;
+          }).join('')}
           <td class="ctr tnum ts-total-col" style="color:var(--blue);font-weight:800">${fmtHM(v.total)}</td>
           <td class="r ts-act-col">
             <button class="btn small" data-detail-events="${escapeHtml(id)}" data-name="${escapeHtml(v.name)}">View</button>
