@@ -253,6 +253,9 @@ async function loadAll() {
     state.data.leave = (leave.leave || []).map(l => ({ ...l, dates: fmtDateRange(l.start_date, l.end_date) }));
     state.data.roster = roster.roster || [];
     state.data.weekEvents = events.events || [];
+    // Today's absences power the Dashboard's Absent stat + per-row
+    // 'Absent · Sick' pill in the 'Who's working now' table.
+    state.data.absencesToday = await loadAbsencesToday();
     // Initial Timesheets payload mirrors the dashboard's current-week events.
     if (state.tsPeriod === 'this-week') {
       state.data.tsEvents = state.data.weekEvents;
@@ -263,6 +266,23 @@ async function loadAll() {
     state.error = e.message;
   } finally {
     state.loading = false; render();
+  }
+}
+
+async function loadAbsencesToday() {
+  if (!window.sb) return [];
+  try {
+    const _ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const today = _ymd(new Date());
+    const { data, error } = await window.sb
+      .from('absences')
+      .select('staff_id,reason,reason_note')
+      .eq('date', today);
+    if (error) throw error;
+    return data || [];
+  } catch (e) {
+    console.warn('[absences-today] load failed', e);
+    return [];
   }
 }
 
@@ -474,15 +494,25 @@ function renderView() {
 // ───── DASHBOARD ─────────────────────────────────────────────────────
 function renderDashboard() {
   const team = state.data.team || [];
-  const onNow = team.filter(s => s.status === 'in').length;
-  const hoursToday = team.reduce((s, t) => s + (t.todayHrs || 0), 0);
+  // Drop admins / managers from the dashboard counters too — same
+  // treatment as the timesheets.
+  const exempt = exemptIdsFromRoster();
+  const trackable = team.filter(t => !exempt.has(t.id));
+  // Map staff_id -> absence record so we can pill them in the table.
+  const absById = new Map();
+  (state.data.absencesToday || []).forEach(a => absById.set(a.staff_id, a));
+  const onNow = trackable.filter(s => s.status === 'in').length;
+  const absentNow = trackable.filter(s => s.status !== 'in' && absById.has(s.id)).length;
+  const hoursToday = trackable.reduce((s, t) => s + (t.todayHrs || 0), 0);
   const pending = (state.data.leave || []).filter(l => l.status === 'Pending');
-  const offToday = team.filter(s => s.status !== 'in').length;
+  const offToday = Math.max(0, trackable.filter(s => s.status !== 'in').length - absentNow);
 
   return `
     <div class="stat-row">
-      ${statCard('clock',     'var(--green)', 'var(--greenBg)', 'On the clock',   String(onNow), `of ${team.length} staff`)}
-      ${statCard('clipboard', 'var(--amber)', 'var(--amberBg)', 'Pending requests', String(pending.length), pending.length ? 'needs your review' : 'all caught up')}
+      ${statCard('clock',     'var(--green)', 'var(--greenBg)', 'On the clock',   String(onNow), `of ${trackable.length} staff`)}
+      ${absentNow > 0
+        ? statCard('users',   'var(--amber)', 'var(--amberBg)', 'Absent today',   String(absentNow), 'accounted for')
+        : statCard('clipboard', 'var(--amber)', 'var(--amberBg)', 'Pending requests', String(pending.length), pending.length ? 'needs your review' : 'all caught up')}
       ${statCard('users',     'var(--blue)',  'var(--skySoft)', 'Not in yet',     String(offToday), 'staff still clocked out')}
       ${statCard('chart',     'var(--ink)',   '#EEF0F6',        'Hours today',    fmtHM(hoursToday), 'across the team')}
     </div>
@@ -503,19 +533,24 @@ function renderDashboard() {
               <th>Today</th><th class="live-now-note-col">Shift note</th>
             </tr></thead>
             <tbody>
-              ${team.length === 0 ? `<tr><td colspan="5" class="muted" style="text-align:center;padding:30px">No staff in the roster yet.</td></tr>` : ''}
-              ${team.map((s, i) => `<tr class="${(s.status === 'off' || s.status === 'leave') ? 'dim' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
+              ${trackable.length === 0 ? `<tr><td colspan="5" class="muted" style="text-align:center;padding:30px">No staff in the roster yet.</td></tr>` : ''}
+              ${trackable.map((s, i) => {
+                const ab = absById.get(s.id);
+                const tag = (ab && s.status !== 'in')
+                  ? `<span class="tag" style="background:#FFE9CB;color:#6B3F00;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:700" title="${escapeHtml(ab.reason)}${ab.reason_note ? ' — ' + escapeHtml(ab.reason_note) : ''}">● Absent · ${escapeHtml(ab.reason)}</span>`
+                  : tagFor(s.status);
+                return `<tr class="${(s.status === 'off' || s.status === 'leave') ? 'dim' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
                 <td>
                   <div class="nm">
                     <div class="av" style="background:${avColor(i)};width:34px;height:34px;font-size:12.5px">${initials(s.name)}</div>
                     <div class="who"><div class="n">${escapeHtml(s.name)}</div><div class="r">${escapeHtml(s.role || '')}</div></div>
                   </div>
                 </td>
-                <td>${tagFor(s.status)}</td>
+                <td>${tag}</td>
                 <td class="tnum">${s.cin || '—'}</td>
                 <td class="tnum" style="color:var(--blue);font-weight:800">${fmtHM(s.todayHrs || 0)}</td>
-                <td class="muted live-now-note-col"><div class="live-now-note">${escapeHtml(s.note || '—')}</div></td>
-              </tr>`).join('')}
+                <td class="muted live-now-note-col"><div class="live-now-note">${escapeHtml(ab && ab.reason_note ? ab.reason_note : (s.note || '—'))}</div></td>
+              </tr>`;}).join('')}
             </tbody>
           </table>
         </div>
