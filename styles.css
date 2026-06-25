@@ -281,6 +281,40 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
 .sheet-report .sheet-sub { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 14px; font-size: 13px; color: var(--ink); }
 .sheet-report .rep-division-row { display: flex; align-items: center; gap: 10px; }
 .sheet-report .rep-division-row .rep-input { flex: 1; }
+/* Teams chip multi-select — replaces the old free-text Division input
+   so staff can only commit to canonical clock-in team names. */
+.sheet-report .rep-teams-block {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.sheet-report .rep-teams-selected {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  min-height: 28px;
+  align-items: center;
+}
+.sheet-report .rep-teams-list {
+  margin-top: 8px;
+  max-height: 180px; overflow-y: auto;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  padding: 2px;
+}
+@media (max-width: 460px) {
+  .sheet-report .rep-teams-list { grid-template-columns: 1fr; }
+}
+.sheet-report .rep-team-chip {
+  text-align: left; padding: 8px 11px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: #fff; color: var(--ink);
+  font-family: Montserrat; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+}
+.sheet-report .rep-team-chip:hover { border-color: var(--blue); }
+.sheet-report .rep-team-chip.on {
+  background: var(--blue); color: #fff; border-color: var(--blue);
+}
+.sheet-report .rep-teams-selected .rep-team-chip { padding: 4px 10px; font-size: 12.5px; }
 .sheet-report .rep-section-head {
   margin: 14px 0 6px;
   font-size: 12px; font-weight: 800; letter-spacing: 0.04em;

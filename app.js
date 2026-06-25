@@ -913,12 +913,22 @@ async function submitChangeTeam() {
 // AND clocks the user out atomically — closing the modal without
 // submitting just leaves them clocked in.
 function openClockOutReport() {
+  // Defensive: only LNs are supposed to see this form. Assistants and
+  // every other designation clock out via the confirm sheet — guard
+  // here too so future call sites can't accidentally inflict it on them.
+  const d = String((state.agent && state.agent.designation) || '').toLowerCase();
+  if (d !== 'ln') { openClockoutConfirm(); return; }
+  // Pre-seed teams from the clock-in note (split on " / ", keep only ones
+  // that match a canonical team — drops freeform garbage like "ballers!!").
+  const seedTeams = _splitNote(state.home && state.home.lastNote || '')
+    .filter(t => CLOCK_CAMPAIGNS_KNOWN.has(t));
   state.sheet = {
     type: 'report',
     busy: false,
     error: '',
+    teamFilter: '',
     values: {
-      division: (state.agent && state.agent.division) || '',
+      teams: seedTeams,
       hs_tasks_completed: '', hs_calls_made: '', hs_emails_sent: '',
       hs_whatsapps_sent: '', hs_answered_contacts: '',
       hs_leads_vals: '', hs_reconverted_leads: '',
@@ -940,12 +950,16 @@ function renderReportSheet() {
       <input class="rep-input tnum" type="number" min="0" inputmode="numeric"
              data-rep-key="${key}" value="${v[key]}" placeholder="0">
     </label>`;
-  // Currently divisions are free-text against the staff.division field;
-  // until we wire a config-driven picker we offer the most common
-  // examples + the agent's current value as a datalist.
-  const knownDivisions = ['Engine Room', 'RM', 'Fancy', 'Rental Support', 'Admin Staff'];
-  const divisionOptions = knownDivisions
-    .map(d => `<option value="${escapeHtml(d)}"></option>`).join('');
+  // Teams sourced from the canonical clock-in list — no free-text. Staff
+  // can pick one or many; the submitted division is the joined list.
+  const picked = new Set(v.teams || []);
+  const filter = (state.sheet.teamFilter || '').trim().toLowerCase();
+  const available = (filter
+    ? CLOCK_CAMPAIGNS.filter(c => c.toLowerCase().includes(filter))
+    : CLOCK_CAMPAIGNS);
+  const selectedChips = picked.size
+    ? Array.from(picked).map(t => `<button type="button" class="rep-team-chip on" data-rep-unteam="${escapeHtml(t)}">${escapeHtml(t)}<span aria-hidden="true"> ×</span></button>`).join('')
+    : `<span class="muted" style="font-size:12px">No teams picked yet — tap below</span>`;
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
     <div class="sheet sheet-report" role="dialog">
@@ -956,11 +970,17 @@ function renderReportSheet() {
       </div>
       <div class="sheet-sub">
         <div>👤 <b>${escapeHtml(state.agent.name)}</b></div>
-        <div class="rep-division-row">
-          <label class="rep-label" for="repDivision">🏷️ Division</label>
-          <input id="repDivision" class="rep-input" list="repDivisionList"
-                 value="${escapeHtml(v.division)}" placeholder="Division">
-          <datalist id="repDivisionList">${divisionOptions}</datalist>
+        <div class="rep-teams-block">
+          <div class="rep-label" style="margin-bottom:6px">🏷️ Teams worked today <span class="muted" style="font-weight:500">(tap to pick one or more)</span></div>
+          <div class="rep-teams-selected">${selectedChips}</div>
+          <input id="repTeamSearch" class="rep-input" type="search"
+                 placeholder="Search teams…" value="${escapeHtml(state.sheet.teamFilter || '')}" autocomplete="off"
+                 style="margin-top:8px">
+          <div class="rep-teams-list">
+            ${available.length === 0
+              ? '<div class="muted" style="grid-column:1/-1;padding:8px;font-size:12.5px">No match</div>'
+              : available.map(t => `<button type="button" class="rep-team-chip ${picked.has(t) ? 'on' : ''}" data-rep-team="${escapeHtml(t)}">${escapeHtml(t)}${picked.has(t) ? ' ✓' : ''}</button>`).join('')}
+          </div>
         </div>
       </div>
       <div class="sheet-body" style="overflow-y:auto;max-height:60vh">
@@ -1017,8 +1037,27 @@ function wireReportSheet() {
       state.sheet.values[el.dataset.repKey] = e.target.value;
     });
   });
-  const div = document.getElementById('repDivision');
-  if (div) div.addEventListener('input', e => { state.sheet.values.division = e.target.value; });
+  // Team chip picker — tap to toggle, × on a selected chip to remove.
+  const toggleTeam = (t) => {
+    const cur = new Set(state.sheet.values.teams || []);
+    if (cur.has(t)) cur.delete(t); else cur.add(t);
+    state.sheet.values.teams = Array.from(cur);
+    render();
+  };
+  document.querySelectorAll('[data-rep-team]').forEach(el => {
+    el.addEventListener('click', () => toggleTeam(el.dataset.repTeam));
+  });
+  document.querySelectorAll('[data-rep-unteam]').forEach(el => {
+    el.addEventListener('click', () => toggleTeam(el.dataset.repUnteam));
+  });
+  const ts = document.getElementById('repTeamSearch');
+  if (ts) ts.addEventListener('input', e => {
+    state.sheet.teamFilter = e.target.value;
+    render();
+    // Restore focus + caret to the search after re-render.
+    const again = document.getElementById('repTeamSearch');
+    if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+  });
   const nt = document.getElementById('repNotes');
   if (nt) nt.addEventListener('input', e => { state.sheet.values.notes = e.target.value; });
   const go = document.getElementById('sheetGo');
@@ -1041,14 +1080,17 @@ async function submitClockOutReport() {
     render();
     return;
   }
-  if (!v.division.trim()) {
-    state.sheet.error = 'Pick a division before submitting.';
+  const teams = (v.teams || []).filter(Boolean);
+  if (teams.length === 0) {
+    state.sheet.error = 'Pick at least one team before submitting.';
     render();
     return;
   }
   state.sheet.busy = true; state.sheet.error = ''; render();
   try {
-    const res = await api('clock_out_report_submit', v);
+    // Backend still expects a single `division` text column — join the
+    // picked teams so existing readers / payroll keep working.
+    const res = await api('clock_out_report_submit', { ...v, division: teams.join(' / ') });
     if (!res || res.ok === false) throw new Error(res && res.error || 'Submit failed');
     // Now actually clock out (re-use the existing path so events log + home reloads).
     state.sheet = null;
