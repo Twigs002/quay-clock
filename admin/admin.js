@@ -254,11 +254,34 @@ async function loadAll() {
     state.data.roster = roster.roster || [];
     state.data.weekEvents = events.events || [];
     // Initial Timesheets payload mirrors the dashboard's current-week events.
-    if (state.tsPeriod === 'this-week') state.data.tsEvents = state.data.weekEvents;
+    if (state.tsPeriod === 'this-week') {
+      state.data.tsEvents = state.data.weekEvents;
+      const r = periodRange('this-week');
+      state.data.tsAbsences = await loadTsAbsences(r.from.toISOString(), r.to.toISOString());
+    }
   } catch (e) {
     state.error = e.message;
   } finally {
     state.loading = false; render();
+  }
+}
+
+async function loadTsAbsences(fromIso, toIso) {
+  if (!window.sb) return [];
+  try {
+    const fromDate = fromIso.slice(0, 10);
+    const toDate   = toIso.slice(0, 10);
+    const { data, error } = await window.sb
+      .from('absences')
+      .select('staff_id,date,reason,reason_note,marked_by')
+      .gte('date', fromDate)
+      .lte('date', toDate)
+      .order('date', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  } catch (e) {
+    console.warn('[ts-absences] load failed', e);
+    return [];
   }
 }
 
@@ -267,17 +290,23 @@ async function loadTsEvents(period) {
   // Custom range only loads when explicitly applied — wait for Apply click.
   if (period === 'custom' && (!state.tsCustomFrom || !state.tsCustomTo)) {
     state.data.tsEvents = [];
-    render(); return;
-  }
-  if (period === 'this-week' && state.data.weekEvents) {
-    state.data.tsEvents = state.data.weekEvents;
+    state.data.tsAbsences = [];
     render(); return;
   }
   const r = periodRange(period, state.tsCustomFrom, state.tsCustomTo);
+  if (period === 'this-week' && state.data.weekEvents) {
+    state.data.tsEvents = state.data.weekEvents;
+    state.data.tsAbsences = await loadTsAbsences(r.from.toISOString(), r.to.toISOString());
+    render(); return;
+  }
   state.loading = true; render();
   try {
-    const data = await api('events', { from: r.from.toISOString(), to: r.to.toISOString() });
+    const [data, absences] = await Promise.all([
+      api('events', { from: r.from.toISOString(), to: r.to.toISOString() }),
+      loadTsAbsences(r.from.toISOString(), r.to.toISOString()),
+    ]);
     state.data.tsEvents = data.events || [];
+    state.data.tsAbsences = absences;
     state.error = null;
   } catch (e) {
     state.error = e.message;
@@ -834,6 +863,43 @@ function buildShiftRows(range) {
     a.weeks.set(wkKey, (a.weeks.get(wkKey) || 0) + s.hrs);
   });
 
+  // Track which (agent, day) already has a shift so we don't double-stamp
+  // an absence row on top of a real clock-in (e.g. came in late despite
+  // being marked absent).
+  const shiftDayKeys = new Set();
+  byAgent.forEach(a => a.shifts.forEach(s => shiftDayKeys.add(`${a.agentId}|${s.dayKey}`)));
+
+  // Inject absence rows for (agent, day) combinations that have an
+  // absence record AND no shift. Each absence row has no in/out time
+  // and renders as a single 'Absent · <reason>' line in renderTimesheetsList.
+  const absences = (state.data.tsAbsences || []).filter(a => {
+    const t = new Date(a.date + 'T12:00:00').getTime();
+    return t >= range.from && t <= range.to;
+  });
+  absences.forEach(a => {
+    if (shiftDayKeys.has(`${a.staff_id}|${a.date}`)) return;
+    const rosterRow = rosterById[a.staff_id];
+    if (!byAgent.has(a.staff_id)) byAgent.set(a.staff_id, {
+      agentId: a.staff_id,
+      agentName: rosterRow ? rosterRow.name : a.staff_id,
+      role: rosterRow ? (rosterRow.role || '') : '',
+      days: new Map(), weeks: new Map(), shifts: [],
+    });
+    const bucket = byAgent.get(a.staff_id);
+    const baseDate = new Date(a.date + 'T08:00:00');
+    bucket.shifts.push({
+      agentId: a.staff_id,
+      agentName: bucket.agentName,
+      role: bucket.role,
+      inDate: baseDate, outDate: null, hrs: 0,
+      note: a.reason_note || '',
+      dayKey: a.date,
+      wkKey:  startOfWeek(baseDate).toISOString().slice(0, 10),
+      absent: true,
+      absentReason: a.reason,
+    });
+  });
+
   // Sort by name; each agent's shifts newest-first; flatten into rows so we
   // can stamp daily/weekly totals on the LAST row of each day/week (Connecteam).
   const rows = [];
@@ -848,8 +914,10 @@ function buildShiftRows(range) {
         rows.push({
           ...s,
           role: a.role,
-          dailyTotal:  isLastForDay  ? a.days.get(s.dayKey)  : null,
-          weeklyTotal: isLastForWeek ? a.weeks.get(s.wkKey) : null,
+          // Absence rows show '—' for daily/weekly totals instead of 0:00 so
+          // they don't get mistaken for a real 0-hour shift.
+          dailyTotal:  isLastForDay  ? (s.absent ? null : a.days.get(s.dayKey))  : null,
+          weeklyTotal: isLastForWeek ? (s.absent ? null : a.weeks.get(s.wkKey)) : null,
         });
         lastDay  = s.dayKey;
         lastWeek = s.wkKey;
@@ -883,6 +951,27 @@ function renderTimesheetsList(range) {
         ${rows.map((s, i) => {
           const d = s.inDate || s.outDate;
           const dateLbl = d ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—';
+          if (s.absent) {
+            // Absence row — collapsed to a single 'Absent · <reason>' pill
+            // spanning the in/out/shift columns. Daily/weekly totals show
+            // '—' (set to null in buildShiftRows) so payroll math isn't
+            // affected.
+            return `<tr style="background:#FFF8EC">
+              <td>
+                <div class="nm">
+                  <div class="av" style="background:${avColor(i)};width:28px;height:28px;font-size:11px">${initials(s.agentName)}</div>
+                  <div class="who"><div class="n">${escapeHtml(s.agentName)}</div></div>
+                </div>
+              </td>
+              ${cell(escapeHtml(s.role || ''))}
+              ${cell(escapeHtml(dateLbl))}
+              <td class="ctr" colspan="3"><span class="pill" style="background:#FFE9CB;color:#6B3F00;padding:3px 10px;font-size:11.5px;font-weight:700">Absent · ${escapeHtml(s.absentReason || 'Absent')}</span></td>
+              <td class="ctr"><span class="muted">—</span></td>
+              <td class="ctr"><span class="muted">—</span></td>
+              ${cell(escapeHtml(s.note || ''))}
+              <td class="r"></td>
+            </tr>`;
+          }
           return `<tr>
             <td>
               <div class="nm">
