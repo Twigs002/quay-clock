@@ -596,35 +596,31 @@ function renderDashboard() {
   `;
 }
 
-// Per-staff weekly clocked-hours vs their weekly_hours target. Sorted
-// most-behind-first so the dashboard surfaces who still owes hours
-// before week-end. Staff with no target set show their hours-so-far
-// without a bar (you can't measure progress against an unset target).
+// Per-staff weekly clocked-hours vs a flat 45h target for everyone.
+// Sorted most-behind-first so the dashboard surfaces who still owes
+// hours before week-end. Admin / manager rows are excluded (they're
+// exempt from clock-in tracking).
+const WEEKLY_TARGET_HOURS = 45;
+
 function renderWeeklyTargetProgress(team) {
   const events = state.data.weekEvents || [];
+  const exempt = exemptIdsFromRoster();
   const hoursById = new Map();
   events.forEach(e => {
+    if (exempt.has(e.id)) return;
     if (e.action !== 'out' || e.duration_hrs == null) return;
     hoursById.set(e.id, (hoursById.get(e.id) || 0) + Number(e.duration_hrs));
   });
-  // Only show staff who have either a target OR worked hours this week.
-  // Pure benchwarmers with no target make the list noisier without
-  // adding signal — they'd all show 0/0.
+  // Show every non-exempt staff member with the flat 45h target.
   const rows = team
-    .filter(s => s.weekly_hours != null || hoursById.has(s.id))
+    .filter(s => !exempt.has(s.id))
     .map(s => {
       const hrs = Number(hoursById.get(s.id) || 0);
-      const target = s.weekly_hours != null ? Number(s.weekly_hours) : null;
-      const pct = target && target > 0 ? Math.min(999, (hrs / target) * 100) : null;
+      const target = WEEKLY_TARGET_HOURS;
+      const pct = Math.min(999, (hrs / target) * 100);
       return { id: s.id, name: s.name, role: s.role, hrs, target, pct };
     })
-    .sort((a, b) => {
-      // Untargeted staff sink to the bottom; targeted staff sort by % asc.
-      if (a.pct == null && b.pct == null) return a.name.localeCompare(b.name);
-      if (a.pct == null) return 1;
-      if (b.pct == null) return -1;
-      return a.pct - b.pct;
-    });
+    .sort((a, b) => a.pct - b.pct);  // most-behind first
 
   if (rows.length === 0) {
     return `<div class="muted" style="font-size:13px;font-weight:500;padding:10px 0">No staff with hours or weekly targets yet.</div>`;
@@ -632,18 +628,16 @@ function renderWeeklyTargetProgress(team) {
 
   return `<div class="wkt-list">
     ${rows.map(r => {
-      const targetLabel = r.target != null ? `${r.hrs.toFixed(1)} / ${r.target}h` : `${r.hrs.toFixed(1)}h · no target`;
-      // Colour bands: <60% red, 60–89% amber, ≥90% green. Mirrors the
-      // dashboard's standard performance traffic-light treatment.
-      const tone = r.pct == null ? 'untargeted'
-                 : r.pct >= 90 ? 'ok'
+      const targetLabel = `${r.hrs.toFixed(1)} / ${r.target}h`;
+      // Colour bands: <60% red, 60–89% amber, ≥90% green.
+      const tone = r.pct >= 90 ? 'ok'
                  : r.pct >= 60 ? 'warn'
                  : 'low';
-      const barPct = r.pct == null ? 0 : Math.min(100, r.pct);
+      const barPct = Math.min(100, r.pct);
       return `<div class="wkt-row">
         <div class="wkt-meta">
           <span class="wkt-name">${escapeHtml(r.name)}</span>
-          <span class="wkt-val tnum ${tone}">${escapeHtml(targetLabel)}${r.pct != null ? ` · ${r.pct.toFixed(0)}%` : ''}</span>
+          <span class="wkt-val tnum ${tone}">${escapeHtml(targetLabel)} · ${r.pct.toFixed(0)}%</span>
         </div>
         <div class="wkt-bar"><div class="wkt-fill ${tone}" style="width:${barPct.toFixed(1)}%"></div></div>
       </div>`;
