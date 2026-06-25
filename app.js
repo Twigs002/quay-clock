@@ -584,11 +584,11 @@ function wireHome() {
   if (btn) btn.addEventListener('click', () => {
     if (!state.home) return;
     if (state.home.status === 'in') {
-      // LN + Assistant must fill the end-of-day report before clocking
-      // out — the form clocks them out itself on submit.
-      // Everyone else picks a campaign from the same list as clock-in.
+      // Only LNs must fill the end-of-day report before clocking out —
+      // the form clocks them out itself on submit. Assistants (broker
+      // assistants etc.) and everyone else just confirm + clock out.
       const d = String((state.agent && state.agent.designation) || '').toLowerCase();
-      if (d === 'ln' || d === 'assistant') {
+      if (d === 'ln') {
         openClockOutReport();
       } else {
         // Confirm first — staff have been mis-tapping the big button and
