@@ -773,11 +773,19 @@ function renderTimesheetsGrid(range) {
   // Drives the Absent pill in empty cells.
   const absByKey = new Map();
   (state.data.tsAbsences || []).forEach(a => absByKey.set(`${a.staff_id}|${a.date}`, a));
-  // Per-col date key + weekday flag, computed once.
+  // Per-col date key + weekday flag, computed once. Use local-time date
+  // components (NOT toISOString) so a SAST browser viewing Monday's
+  // 00:00 column maps to '2026-06-22' instead of '2026-06-21' UTC.
+  const _localYmd = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   const colMeta = cols.map(c => {
     const d = new Date(c.from);
     return {
-      dayKey:    d.toISOString().slice(0, 10),
+      dayKey:    _localYmd(d),
       isWeekend: d.getDay() === 0 || d.getDay() === 6,
       isPast:    c.to < Date.now(),
     };
@@ -875,11 +883,19 @@ function buildShiftRows(range) {
   });
 
   // Group: agent → day → shifts; compute daily + weekly totals.
+  // Use local-date components so dayKey aligns with the absences.date
+  // (DATE column in SAST) instead of drifting one day west via UTC.
+  const _ymd = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   const byAgent = new Map();
   shifts.forEach(s => {
     const baseDate = s.inDate || s.outDate;
-    const dayKey = baseDate.toISOString().slice(0, 10);
-    const wkKey  = startOfWeek(baseDate).toISOString().slice(0, 10);
+    const dayKey = _ymd(baseDate);
+    const wkKey  = _ymd(startOfWeek(baseDate));
     if (!byAgent.has(s.agentId)) byAgent.set(s.agentId, {
       agentId: s.agentId, agentName: s.agentName, role: s.role,
       days: new Map(), weeks: new Map(), shifts: [],
@@ -921,7 +937,7 @@ function buildShiftRows(range) {
       inDate: baseDate, outDate: null, hrs: 0,
       note: a.reason_note || '',
       dayKey: a.date,
-      wkKey:  startOfWeek(baseDate).toISOString().slice(0, 10),
+      wkKey:  _ymd(startOfWeek(baseDate)),
       absent: true,
       absentReason: a.reason,
     });
