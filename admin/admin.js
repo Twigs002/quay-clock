@@ -749,15 +749,33 @@ function renderTimesheets() {
   </div>`;
 }
 
+// Admin / Manager / Super admin staff don't need to appear on timesheets
+// — they're not callers and were just adding noise to the grid + list.
+// Mirrors the dashboard's isExemptStaff() predicate.
+function isExemptRoster(s) {
+  if (!s) return false;
+  if (s.admin || s.super) return true;
+  const role = String(s.role || '').toLowerCase();
+  return role === 'manager' || role === 'admin' || role === 'super admin' || role === 'super_admin';
+}
+function exemptIdsFromRoster() {
+  return new Set((state.data.roster || []).filter(isExemptRoster).map(r => r.id));
+}
+
 function renderTimesheetsGrid(range) {
   const period = state.tsPeriod || 'this-week';
   const events = state.data.tsEvents || [];
   const roster = state.data.roster || [];
+  const exempt = exemptIdsFromRoster();
   const isMonth = range.kind === 'month';
   const cols = isMonth ? monthlyBuckets(range) : weeklyBuckets(range);
   const grid = {};
-  roster.forEach(a => { grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0), total: 0, days: {} }; });
+  roster.forEach(a => {
+    if (exempt.has(a.id)) return;
+    grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0), total: 0, days: {} };
+  });
   events.forEach(e => {
+    if (exempt.has(e.id)) return;
     if (e.action !== 'out' || e.duration_hrs == null) return;
     const ts = new Date(e.ts).getTime();
     if (!grid[e.id]) grid[e.id] = { name: e.name, role: '', vals: cols.map(_ => 0), total: 0, days: {} };
@@ -848,14 +866,18 @@ function renderTimesheetsGrid(range) {
 // table reads exactly like Connecteam's weekly-timesheet view. Used by
 // both the on-screen list and the matching CSV export below.
 function buildShiftRows(range) {
+  // Drop admin / manager / super staff from BOTH the event stream and the
+  // roster lookup so their rows + absences never reach the timesheet list.
+  const exempt = exemptIdsFromRoster();
   const events = (state.data.tsEvents || [])
+    .filter(e => !exempt.has(e.id))
     .filter(e => {
       const t = new Date(e.ts).getTime();
       return t >= range.from && t <= range.to;
     })
     .slice()
     .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
-  const roster = state.data.roster || [];
+  const roster = (state.data.roster || []).filter(r => !exempt.has(r.id));
   const rosterById = Object.fromEntries(roster.map(r => [r.id, r]));
 
   // Pair IN with the next OUT for the same staffer.
@@ -920,6 +942,7 @@ function buildShiftRows(range) {
     return t >= range.from && t <= range.to;
   });
   absences.forEach(a => {
+    if (exempt.has(a.staff_id)) return;
     if (shiftDayKeys.has(`${a.staff_id}|${a.date}`)) return;
     const rosterRow = rosterById[a.staff_id];
     if (!byAgent.has(a.staff_id)) byAgent.set(a.staff_id, {
