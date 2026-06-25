@@ -660,7 +660,7 @@ const CLOCK_CAMPAIGNS_ALL = [
   { name: 'Jaguars' }, { name: 'Knights' }, { name: 'Koeksisters' }, { name: 'Komorants' },
   { name: 'Lions' }, { name: 'Llamas' }, { name: 'Musketeers' }, { name: 'Panthers' },
   { name: 'Pirates' }, { name: 'Power Rangers' }, { name: 'Prom Queens' },
-  { name: 'Proteas' }, { name: 'Raccoons' }, { name: 'Rockets' }, { name: 'Samurais' },
+  { name: 'Proteas' }, { name: 'Raccoons' }, { name: 'Rentals' }, { name: 'Rockets' }, { name: 'Samurais' },
   { name: 'Slayers' }, { name: 'Soccer Moms' }, { name: 'Spartans' },
   { name: 'Surfers' }, { name: 'Swesties' }, { name: 'Targaryens' }, { name: 'Tigers' },
   { name: 'TNT' }, { name: 'Tornadoes' }, { name: 'Vikings' }, { name: 'Vipers' },
