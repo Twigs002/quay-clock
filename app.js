@@ -238,10 +238,59 @@ async function loadHome() {
 }
 async function loadTimesheet() {
   const now = new Date();
-  const from = startOfWeek(now).toISOString();
-  const to   = endOfWeek(now).toISOString();
-  const data = await api('events', { agent_id: state.agent.id, from, to });
-  state.timesheet = buildTimesheet(data.events, now);
+  const wFrom = startOfWeek(now).toISOString();
+  const wTo   = endOfWeek(now).toISOString();
+  // Month-to-date covers the FULL current calendar month so the
+  // monthly target counts working days that haven't happened yet too.
+  const mFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const mTo   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+  const [weekData, monthData] = await Promise.all([
+    api('events', { agent_id: state.agent.id, from: wFrom, to: wTo }),
+    api('events', { agent_id: state.agent.id, from: mFrom, to: mTo }),
+  ]);
+  state.timesheet = buildTimesheet(weekData.events, now);
+  state.timesheet.monthSummary = buildMonthSummary(monthData.events, now);
+}
+
+function buildMonthSummary(events, now) {
+  // Pair in/out, sum hours that fall in the current calendar month.
+  let total = 0;
+  let openIn = null;
+  const sorted = (events || []).slice().sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  sorted.forEach(e => {
+    if (e.action === 'in') { openIn = e; return; }
+    if (e.action !== 'out') return;
+    const inDate = openIn ? new Date(openIn.ts) : null;
+    const outDate = new Date(e.ts);
+    const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
+      ? Number(e.duration_hrs)
+      : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+    if (hrs > 0) total += hrs;
+    openIn = null;
+  });
+  // Add in-progress shift if there's still an open clock-in.
+  if (openIn) {
+    const inDate = new Date(openIn.ts);
+    total += Math.max(0, (Date.now() - inDate.getTime()) / 3.6e6);
+  }
+  // Target = weekdays in month × 8h (matches the 40h/week framing).
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  let weekdays = 0;
+  for (let d = 1; d <= lastDay; d++) {
+    const dow = new Date(y, m, d).getDay();
+    if (dow >= 1 && dow <= 5) weekdays++;
+  }
+  const target = weekdays * 8;
+  const overtime = total - target;
+  const toGoTxt = overtime > 0 ? `+${fmtHM(overtime)} overtime` : `${fmtHM(target - total)} to go`;
+  return {
+    totalHrs: total,
+    target,
+    toGoTxt,
+    monthLabel: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+  };
 }
 async function loadLeave() {
   // "leave" name kept for state continuity; this tab is now Requests
@@ -1477,6 +1526,21 @@ function renderTimesheet() {
   const overtime = ts.totalHrs - ts.target;
   const otTxt = overtime > 0 ? `+${fmtHM(overtime)} overtime` : `${fmtHM(ts.target - ts.totalHrs)} to go`;
 
+  const ms = ts.monthSummary;
+  const monthCard = ms ? `
+      <div class="card pad" style="margin-top:10px">
+        <div class="between">
+          <div>
+            <div class="label-eyebrow">${escapeHtml(ms.monthLabel)} so far</div>
+            <div style="display:flex;align-items:baseline;gap:6px;margin-top:4px">
+              <span style="font-size:28px;font-weight:800" class="tnum">${fmtHM(ms.totalHrs)}</span>
+              <span style="font-size:13px;font-weight:600;color:var(--muted)">of ${ms.target}h</span>
+            </div>
+          </div>
+          <span class="pill" style="background:var(--skySoft);color:var(--blue)">${escapeHtml(ms.toGoTxt)}</span>
+        </div>
+      </div>` : '';
+
   return `${head}
     <div class="content tight">
       <div class="card pad">
@@ -1499,6 +1563,7 @@ function renderTimesheet() {
           `).join('')}
         </div>
       </div>
+      ${monthCard}
 
       <div class="section-title">Entries</div>
       <div class="col">
