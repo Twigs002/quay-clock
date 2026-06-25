@@ -633,11 +633,12 @@ function wireHome() {
   if (btn) btn.addEventListener('click', () => {
     if (!state.home) return;
     if (state.home.status === 'in') {
-      // Only LNs must fill the end-of-day report before clocking out —
-      // the form clocks them out itself on submit. Assistants (broker
-      // assistants etc.) and everyone else just confirm + clock out.
+      // LNs and Assistants must fill the end-of-day report before clocking
+      // out — the form clocks them out itself on submit. Admin Assistants
+      // are exempt (they don't run leads), and everyone else just confirms
+      // and clocks out.
       const d = String((state.agent && state.agent.designation) || '').toLowerCase();
-      if (d === 'ln') {
+      if (d === 'ln' || d === 'assistant') {
         openClockOutReport();
       } else {
         // Confirm first — staff have been mis-tapping the big button and
@@ -913,11 +914,12 @@ async function submitChangeTeam() {
 // AND clocks the user out atomically — closing the modal without
 // submitting just leaves them clocked in.
 function openClockOutReport() {
-  // Defensive: only LNs are supposed to see this form. Assistants and
-  // every other designation clock out via the confirm sheet — guard
-  // here too so future call sites can't accidentally inflict it on them.
+  // Defensive: only LNs and Assistants should see this form. Admin
+  // Assistants and every other designation clock out via the confirm
+  // sheet — guard here too so future call sites can't accidentally
+  // inflict the EOD report on them.
   const d = String((state.agent && state.agent.designation) || '').toLowerCase();
-  if (d !== 'ln') { openClockoutConfirm(); return; }
+  if (d !== 'ln' && d !== 'assistant') { openClockoutConfirm(); return; }
   // Pre-seed teams from the clock-in note (split on " / ", keep only ones
   // that match a canonical team — drops freeform garbage like "ballers!!").
   const seedTeams = _splitNote(state.home && state.home.lastNote || '')

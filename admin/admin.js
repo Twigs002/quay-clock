@@ -1797,17 +1797,18 @@ function renderStaffModal() {
         <div class="field-row">
           <label class="field"><span>Designation</span>
             <select id="sfDesignation">
-              ${['super_admin','manager','rm','fancy','ln','assistant'].map(d => `
+              ${['super_admin','manager','rm','fancy','ln','assistant','admin_assistant'].map(d => `
                 <option value="${d}" ${f.designation === d ? 'selected' : ''}>${
-                  d === 'super_admin' ? 'Super Admin' :
-                  d === 'manager'     ? 'Manager' :
-                  d === 'rm'          ? 'RM (Relationship Manager)' :
-                  d === 'fancy'       ? 'Fancy Caller' :
-                  d === 'ln'          ? 'LN (Lead Nurturer)' :
+                  d === 'super_admin'     ? 'Super Admin' :
+                  d === 'manager'         ? 'Manager' :
+                  d === 'rm'              ? 'RM (Relationship Manager)' :
+                  d === 'fancy'           ? 'Fancy Caller' :
+                  d === 'ln'              ? 'LN (Lead Nurturer)' :
+                  d === 'admin_assistant' ? 'Admin Assistant' :
                   'Assistant'
                 }</option>`).join('')}
             </select>
-            <div class="hint">LN + Assistant get the end-of-day report form on clock-out.</div>
+            <div class="hint">LN + Assistant get the end-of-day report form on clock-out. Admin Assistant is exempt.</div>
           </label>
           <label class="field"><span>Division</span>
             <input id="sfDivision" type="text" list="sfDivisionList" value="${escapeHtml(f.division || '')}" placeholder="e.g. Engine Room">
