@@ -1515,21 +1515,38 @@ async function deleteEvent(idx) {
 
 async function addEvent() {
   const e = state.eventEditor;
+  // Guard against double-fire: rapid clicks / Enter-key submits both
+  // landed here before the first INSERT settled, creating two rows. The
+  // flag is on the state, not the button, so it survives a render().
+  if (e._adding) return;
+  e._adding = true;
+  const addBtn = document.getElementById('evAdd');
+  if (addBtn) { addBtn.disabled = true; addBtn.textContent = 'Adding…'; }
   const action = document.getElementById('evNewAction').value;
   const date = document.getElementById('evNewDate').value;
   const time = document.getElementById('evNewTime').value;
   const note = document.getElementById('evNewNote').value;
   e.addDraft = { action, date, time, note };
-  if (!date || !time) { e.error = 'Pick a valid date and time'; render(); return; }
+  if (!date || !time) {
+    e.error = 'Pick a valid date and time';
+    e._adding = false;
+    render(); return;
+  }
   const ts = new Date(date + 'T' + time + ':00').toISOString();
   try {
-    await api('event_add', { agent_id: e.agentId, ts, dir: action, note });
+    const res = await api('event_add', { agent_id: e.agentId, ts, dir: action, note });
+    // Defensive: surface the raw payload + response so any future "saved
+    // event came back wrong direction" reproductions land with diagnostic
+    // breadcrumbs in the console instead of silent state.
+    console.log('[event_add]', { sent: { agent_id: e.agentId, ts, dir: action, note }, got: res });
     e.events.push({ ts, id: e.agentId, name: e.agentName, action, note, duration_hrs: null });
     e.events.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
     e.adding = false; e.error = '';
     showToast('Added');
   } catch (err) {
     e.error = String(err.message || err);
+  } finally {
+    e._adding = false;
   }
   render();
 }
