@@ -465,6 +465,68 @@ const handlers = {
     if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
     const id = String(payload.id || '').toLowerCase();
     if (!id) return { ok: false, error: 'Missing id' };
+
+    // Rate changes land in staff_rate_history (dated audit row) AND in
+    // staff.hourly_rate (denormalised current-rate cache). Both writes
+    // happen as the calling user — RLS on staff_rate_history + staff
+    // gates both to admins. No SECURITY DEFINER, no RPC. If either write
+    // fails, we surface the error and stop.
+    //
+    // Caller can pass `rate_effective_from` (YYYY-MM-DD) to backfill an
+    // older date; default is the local 'today'. We only update the
+    // denormalised cache if the new effective_from is the latest known
+    // for this staff, so a backfilled historical edit can't clobber the
+    // current rate.
+    if (payload.hourly_rate !== undefined) {
+      const newRate = (payload.hourly_rate === '' || payload.hourly_rate == null)
+        ? null
+        : Number(payload.hourly_rate);
+      if (newRate != null) {
+        // Local YYYY-MM-DD so 'today' matches the admin form, not UTC.
+        const _d = new Date();
+        const _todayYmd = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`;
+        const effective = payload.rate_effective_from || _todayYmd;
+
+        // 1. Upsert the audit row. Idempotent on (staff_id, effective_from)
+        //    so re-saving the same date overwrites the rate in place
+        //    instead of duplicating.
+        const { error: histErr } = await sb
+          .from('staff_rate_history')
+          .upsert(
+            {
+              staff_id: id,
+              hourly_rate: newRate,
+              effective_from: effective,
+              reason: payload.rate_reason || '',
+              changed_by: me.id,
+            },
+            { onConflict: 'staff_id,effective_from' }
+          );
+        if (histErr) return { ok: false, error: histErr.message };
+
+        // 2. Check whether this is the latest effective_from for the
+        //    staffer. If yes, sync the cache on staff.hourly_rate so
+        //    surfaces that read it directly stay correct.
+        const { data: latest, error: latestErr } = await sb
+          .from('staff_rate_history')
+          .select('effective_from')
+          .eq('staff_id', id)
+          .order('effective_from', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latestErr) return { ok: false, error: latestErr.message };
+        if (latest && latest.effective_from === effective) {
+          const { error: cacheErr } = await sb
+            .from('staff').update({ hourly_rate: newRate }).eq('id', id);
+          if (cacheErr) return { ok: false, error: cacheErr.message };
+        }
+      } else {
+        // Clearing the rate just blanks the cache; no history row.
+        const { error } = await sb.from('staff').update({ hourly_rate: null }).eq('id', id);
+        if (error) return { ok: false, error: error.message };
+      }
+    }
+
     const patch = {};
     if (payload.name != null)         patch.name = String(payload.name);
     if (payload.role != null)         patch.role = String(payload.role);
@@ -472,15 +534,31 @@ const handlers = {
     if (payload.admin != null)        patch.is_admin = !!payload.admin;
     if (payload.super != null)        patch.is_super = !!payload.super;
     if (payload.active != null)       patch.active = String(payload.active).toLowerCase() !== 'false';
-    if (payload.hourly_rate !== undefined)
-      patch.hourly_rate = (payload.hourly_rate === '' || payload.hourly_rate == null) ? null : Number(payload.hourly_rate);
     if (payload.weekly_hours !== undefined)
       patch.weekly_hours = (payload.weekly_hours === '' || payload.weekly_hours == null) ? null : Number(payload.weekly_hours);
     if (payload.designation !== undefined) patch.designation = payload.designation || null;
     if (payload.division !== undefined)    patch.division    = payload.division || null;
-    const { error } = await sb.from('staff').update(patch).eq('id', id);
-    if (error) return { ok: false, error: error.message };
+    if (Object.keys(patch).length) {
+      const { error } = await sb.from('staff').update(patch).eq('id', id);
+      if (error) return { ok: false, error: error.message };
+    }
     return { ok: true };
+  },
+
+  // Read the full rate history for one staff member — used by the admin
+  // Team card to surface the audit trail next to the current rate.
+  async staff_rate_history(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const id = String(payload.id || '').toLowerCase();
+    if (!id) return { ok: false, error: 'Missing id' };
+    const { data, error } = await sb
+      .from('staff_rate_history')
+      .select('hourly_rate, effective_from, reason, changed_by, created_at')
+      .eq('staff_id', id)
+      .order('effective_from', { ascending: false });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, history: data || [] };
   },
 
   async roster_set_active(payload) {
