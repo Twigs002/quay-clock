@@ -94,14 +94,85 @@ async function lastStatusFor(staffId) {
   return { status, lastIn, lastOut, lastNote };
 }
 
-async function sumHoursForAgent(staffId, fromIso, toIso) {
-  const { data, error } = await sb.from('events')
-    .select('dir, duration_hrs')
+// Re-pair a staff member's IN→OUT events in a window around a touched
+// timestamp and rewrite each OUT's duration_hrs to (out.ts - in.ts). Used
+// after event_update / event_delete to keep the cached column honest —
+// editing an IN's ts used to leave the paired OUT's duration_hrs frozen
+// at its pre-edit value (the 0.068h Matthew Hallett bug). Orphan OUTs
+// (no preceding IN in the window) get NULL so callers fall back to
+// pair-from-timestamps rather than trusting a stale value.
+async function recomputePairDurations(staffId, aroundIso) {
+  const anchor = new Date(aroundIso || new Date()).getTime();
+  // ±7 days covers any realistic single edit; keeps the rewrite scoped
+  // so we don't rewrite the full history on every keystroke.
+  const fromIso = new Date(anchor - 7 * 24 * 3.6e6).toISOString();
+  const toIso   = new Date(anchor + 7 * 24 * 3.6e6).toISOString();
+  const { data: evs, error } = await sb.from('events')
+    .select('id, ts, dir, duration_hrs')
     .eq('staff_id', staffId)
-    .eq('dir', 'out')
-    .gte('ts', fromIso).lte('ts', toIso);
+    .gte('ts', fromIso).lte('ts', toIso)
+    .order('ts', { ascending: true });
+  if (error) return { ok: false, error: error.message };
+  let openIn = null;
+  const writes = [];
+  for (const e of (evs || [])) {
+    if (e.dir === 'in') {
+      // Two INs in a row → previous is orphaned; we won't pair it.
+      openIn = e; continue;
+    }
+    if (e.dir !== 'out') continue;
+    if (openIn) {
+      const hrs = (new Date(e.ts) - new Date(openIn.ts)) / 3.6e6;
+      const newDur = (hrs > 0 && hrs < 24) ? +hrs.toFixed(3) : null;
+      // Only write if the value actually changed (avoid pointless UPDATEs).
+      if (e.duration_hrs == null || Math.abs(Number(e.duration_hrs) - (newDur ?? -1)) > 0.0005) {
+        writes.push({ id: e.id, duration_hrs: newDur });
+      }
+      openIn = null;
+    } else {
+      // Orphan OUT — null the cache so renderers fall back cleanly.
+      if (e.duration_hrs != null) writes.push({ id: e.id, duration_hrs: null });
+    }
+  }
+  for (const w of writes) {
+    await sb.from('events').update({ duration_hrs: w.duration_hrs }).eq('id', w.id);
+  }
+  return { ok: true, rewrote: writes.length };
+}
+
+async function sumHoursForAgent(staffId, fromIso, toIso) {
+  // Pair IN→OUT in the window and compute hours from the pair, falling
+  // back to the cached duration_hrs only for orphan OUTs. Stops the PWA
+  // "today / this week" totals from showing stale cached values (the
+  // Matthew Hallett 0.068h bug). Widen the lower bound by 24h so a shift
+  // that started before fromIso but ended inside the window still pairs.
+  const lookbackFrom = new Date(new Date(fromIso).getTime() - 24 * 3.6e6).toISOString();
+  const { data, error } = await sb.from('events')
+    .select('ts, dir, duration_hrs')
+    .eq('staff_id', staffId)
+    .gte('ts', lookbackFrom).lte('ts', toIso)
+    .order('ts', { ascending: true });
   if (error) throw error;
-  return (data || []).reduce((s, e) => s + (Number(e.duration_hrs) || 0), 0);
+  let openIn = null;
+  let total = 0;
+  const fromTs = new Date(fromIso).getTime();
+  for (const e of (data || [])) {
+    if (e.dir === 'in') { openIn = e; continue; }
+    if (e.dir !== 'out') continue;
+    const outTs = new Date(e.ts).getTime();
+    if (outTs < fromTs) { openIn = null; continue; }
+    let hrs;
+    if (openIn) {
+      hrs = Math.max(0, (outTs - new Date(openIn.ts).getTime()) / 3.6e6);
+    } else if (e.duration_hrs != null && !isNaN(e.duration_hrs)) {
+      hrs = Number(e.duration_hrs);
+    } else {
+      hrs = 0;
+    }
+    if (hrs < 24) total += hrs;
+    openIn = null;
+  }
+  return total;
 }
 
 // ─── action handlers (mirror Apps Script semantics) ─────────────────
@@ -628,6 +699,29 @@ const handlers = {
     else q = q.eq('staff_id', String(payload.agent_id).toLowerCase()).eq('ts', payload.ts);
     const { error } = await q;
     if (error) return { ok: false, error: error.message };
+
+    // Editing a ts or dir invalidates the cached duration_hrs on whichever
+    // OUT was paired with this row. Re-pair the staff's events in a window
+    // around BOTH the old and new timestamps (the move could have changed
+    // which IN→OUT pairs exist), then rewrite each OUT's duration_hrs.
+    if (patch.ts || patch.dir) {
+      const staffId = String(payload.agent_id || '').toLowerCase();
+      // Resolve staff_id from the row if not in payload (id-based lookup).
+      let sid = staffId;
+      if (!sid && (payload._event_id || payload.id)) {
+        const { data: row } = await sb.from('events')
+          .select('staff_id').eq('id', payload._event_id || payload.id).maybeSingle();
+        sid = row && row.staff_id;
+      }
+      if (sid) {
+        await recomputePairDurations(sid, patch.ts || payload.ts);
+        if (patch.ts && payload.ts && patch.ts !== payload.ts) {
+          // ts moved — also re-pair around the OLD position in case its
+          // previous neighbour-OUT is now stale.
+          await recomputePairDurations(sid, payload.ts);
+        }
+      }
+    }
     return { ok: true };
   },
 
@@ -651,11 +745,22 @@ const handlers = {
   async event_delete(payload) {
     const me = _selfStaff || await loadSelfStaff();
     if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
+    // Capture staff_id + ts before delete so we can re-pair afterwards.
+    let sid = String(payload.agent_id || '').toLowerCase();
+    let aroundTs = payload.ts;
+    if ((!sid || !aroundTs) && (payload._event_id || payload.id)) {
+      const { data: row } = await sb.from('events')
+        .select('staff_id, ts').eq('id', payload._event_id || payload.id).maybeSingle();
+      if (row) { sid = sid || row.staff_id; aroundTs = aroundTs || row.ts; }
+    }
     let q = sb.from('events').delete();
     if (payload._event_id || payload.id) q = q.eq('id', payload._event_id || payload.id);
-    else q = q.eq('staff_id', String(payload.agent_id).toLowerCase()).eq('ts', payload.ts);
+    else q = q.eq('staff_id', sid).eq('ts', payload.ts);
     const { error } = await q;
     if (error) return { ok: false, error: error.message };
+    // Deletion shifts the IN→OUT pairing in the window — re-pair so any
+    // newly-orphaned OUT's duration_hrs cache reflects reality.
+    if (sid && aroundTs) await recomputePairDurations(sid, aroundTs);
     return { ok: true };
   },
 
