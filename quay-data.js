@@ -576,15 +576,35 @@ const handlers = {
     if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
     const dir = String(payload.dir || payload.action || '').toLowerCase();
     if (dir !== 'in' && dir !== 'out') return { ok: false, error: 'direction must be in|out' };
+    const staffId = String(payload.agent_id).toLowerCase();
+    // Auto-compute duration_hrs when adding an OUT that pairs with the
+    // most recent IN before ts. Without this, grid + summary surfaces
+    // that key off duration_hrs read the manual shift as 0 hours and
+    // show "No show".
+    let durationHrs = payload.duration_hrs == null || payload.duration_hrs === ''
+      ? null : Number(payload.duration_hrs);
+    if (durationHrs == null && dir === 'out') {
+      const { data: prev } = await sb.from('events')
+        .select('ts, dir')
+        .eq('staff_id', staffId)
+        .lt('ts', payload.ts)
+        .order('ts', { ascending: false })
+        .limit(1);
+      const lastIn = (prev && prev[0] && prev[0].dir === 'in') ? prev[0].ts : null;
+      if (lastIn) {
+        const hrs = (new Date(payload.ts) - new Date(lastIn)) / 3.6e6;
+        if (hrs > 0 && hrs < 24) durationHrs = +hrs.toFixed(3);
+      }
+    }
     const { error } = await sb.from('events').insert({
-      staff_id: String(payload.agent_id).toLowerCase(),
+      staff_id: staffId,
       ts: payload.ts,
       dir,
       note: payload.note || '',
-      duration_hrs: payload.duration_hrs == null || payload.duration_hrs === '' ? null : Number(payload.duration_hrs),
+      duration_hrs: durationHrs,
     });
     if (error) return { ok: false, error: error.message };
-    return { ok: true };
+    return { ok: true, duration_hrs: durationHrs };
   },
 
   async event_update(payload) {
@@ -635,6 +655,79 @@ const handlers = {
     if (payload._event_id || payload.id) q = q.eq('id', payload._event_id || payload.id);
     else q = q.eq('staff_id', String(payload.agent_id).toLowerCase()).eq('ts', payload.ts);
     const { error } = await q;
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  },
+
+  // Mark a staff member absent across a date range. Inserts one
+  // absences row per calendar day; idempotent on (staff_id, date) so
+  // re-running over an overlapping range just bumps the reason in place
+  // instead of duplicating. RLS gates writes to admin/super/manager.
+  async absences_mark(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const isPriv = me.is_admin || me.is_super
+      || (me.designation || '').toLowerCase() === 'manager'
+      || (me.designation || '').toLowerCase() === 'super_admin';
+    if (!isPriv) return { ok: false, error: 'Admin / manager access required' };
+
+    const staffId = String(payload.staff_id || '').toLowerCase();
+    const fromYmd = String(payload.from_date || '');
+    const toYmd   = String(payload.to_date   || payload.from_date || '');
+    const reason  = String(payload.reason || '').trim();
+    const note    = payload.reason_note != null ? String(payload.reason_note) : '';
+    if (!staffId) return { ok: false, error: 'Missing staff_id' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromYmd) || !/^\d{4}-\d{2}-\d{2}$/.test(toYmd))
+      return { ok: false, error: 'Dates must be YYYY-MM-DD' };
+    if (!reason) return { ok: false, error: 'Reason required' };
+    if (toYmd < fromYmd) return { ok: false, error: 'End date must be on or after start date' };
+
+    // Expand to one row per day, capped at 60 to stop accidental
+    // century-spanning ranges from creating thousands of rows.
+    const rows = [];
+    const start = new Date(fromYmd + 'T12:00:00Z');
+    const end   = new Date(toYmd   + 'T12:00:00Z');
+    const MAX_DAYS = 60;
+    for (let d = new Date(start), i = 0; d <= end && i < MAX_DAYS; d.setUTCDate(d.getUTCDate() + 1), i++) {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      rows.push({
+        staff_id: staffId,
+        date: `${y}-${m}-${day}`,
+        reason,
+        reason_note: note || null,
+        marked_by: me.id,
+      });
+    }
+    if (!rows.length) return { ok: false, error: 'No dates in range' };
+
+    // Idempotent upsert keyed on (staff_id, date) — the unique constraint
+    // means re-marking the same day overwrites the reason instead of
+    // failing the whole batch.
+    const { data, error } = await sb
+      .from('absences')
+      .upsert(rows, { onConflict: 'staff_id,date' })
+      .select('staff_id, date, reason, reason_note, marked_by');
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, absences: data || [], count: (data || []).length };
+  },
+
+  // Clear an absence row by (staff_id, date). Used by the admin
+  // 'unmark' affordance when a manager flagged someone in error.
+  async absence_clear(payload) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me) return { ok: false, error: 'Not signed in' };
+    const isPriv = me.is_admin || me.is_super
+      || (me.designation || '').toLowerCase() === 'manager'
+      || (me.designation || '').toLowerCase() === 'super_admin';
+    if (!isPriv) return { ok: false, error: 'Admin / manager access required' };
+    const staffId = String(payload.staff_id || '').toLowerCase();
+    const date    = String(payload.date || '');
+    if (!staffId || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+      return { ok: false, error: 'Missing staff_id / date' };
+    const { error } = await sb.from('absences')
+      .delete().eq('staff_id', staffId).eq('date', date);
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   },

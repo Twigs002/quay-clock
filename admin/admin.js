@@ -763,7 +763,10 @@ function renderTimesheets() {
       </div>
       ${customInputs}
     </div>
-    <button class="btn small" id="tsCsv">${icon('download', 15)} Export ${layout === 'list' ? 'Connecteam CSV' : 'CSV'}</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn small" id="tsMarkAbsent">${icon('calendar', 15)} Mark absent</button>
+      <button class="btn small" id="tsCsv">${icon('download', 15)} Export ${layout === 'list' ? 'Connecteam CSV' : 'CSV'}</button>
+    </div>
   </div>`;
 
   const body = layout === 'list'
@@ -775,6 +778,7 @@ function renderTimesheets() {
     ${body}
     ${state.eventEditor ? renderEventEditor() : ''}
     ${state.tsDetail ? renderTsDetail() : ''}
+    ${state.absenceMarker ? renderAbsenceMarker() : ''}
   </div>`;
 }
 
@@ -803,17 +807,43 @@ function renderTimesheetsGrid(range) {
     if (exempt.has(a.id)) return;
     grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0), total: 0, days: {} };
   });
+  // Pair IN→OUT per staff before bucketing into columns. Manually-added
+  // events (via the admin Edit-events modal) come in with duration_hrs
+  // = null; the old `if (action !== 'out' || duration_hrs == null) return`
+  // dropped them entirely, which is what made Bronwyn read 'No show'
+  // despite a real clock-in + clock-out. We compute hrs from the
+  // timestamps as a fallback so both the auto and manual paths count.
+  const byStaff = new Map();
   events.forEach(e => {
     if (exempt.has(e.id)) return;
-    if (e.action !== 'out' || e.duration_hrs == null) return;
-    const ts = new Date(e.ts).getTime();
-    if (!grid[e.id]) grid[e.id] = { name: e.name, role: '', vals: cols.map(_ => 0), total: 0, days: {} };
-    const idx = cols.findIndex(c => ts >= c.from && ts <= c.to);
-    if (idx >= 0) {
-      grid[e.id].vals[idx] += e.duration_hrs;
-      grid[e.id].total += e.duration_hrs;
-      const dayKey = new Date(e.ts).toISOString().slice(0, 10);
-      grid[e.id].days[dayKey] = (grid[e.id].days[dayKey] || 0) + e.duration_hrs;
+    if (!byStaff.has(e.id)) byStaff.set(e.id, []);
+    byStaff.get(e.id).push(e);
+  });
+  byStaff.forEach((evs, staffId) => {
+    evs.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    let openIn = null;
+    for (const e of evs) {
+      if (e.action === 'in') { openIn = e; continue; }
+      if (e.action !== 'out') continue;
+      const outTs = new Date(e.ts).getTime();
+      // Anchor the shift to its IN time so a 22:00→02:00 shift counts in
+      // the day it started, not the day it ended.
+      const inTs  = openIn ? new Date(openIn.ts).getTime() : outTs;
+      const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
+        ? Number(e.duration_hrs)
+        : Math.max(0, (outTs - inTs) / 3.6e6);
+      openIn = null;
+      if (!grid[staffId]) {
+        grid[staffId] = { name: e.name || staffId, role: '', vals: cols.map(_ => 0), total: 0, days: {} };
+      }
+      const idx = cols.findIndex(c => inTs >= c.from && inTs <= c.to);
+      if (idx >= 0) {
+        grid[staffId].vals[idx] += hrs;
+        grid[staffId].total += hrs;
+        const anchor = new Date(inTs);
+        const dayKey = `${anchor.getFullYear()}-${String(anchor.getMonth()+1).padStart(2,'0')}-${String(anchor.getDate()).padStart(2,'0')}`;
+        grid[staffId].days[dayKey] = (grid[staffId].days[dayKey] || 0) + hrs;
+      }
     }
   });
   // Absence lookup: "staffId|YYYY-MM-DD" -> {reason, reason_note, ...}.
@@ -1162,8 +1192,11 @@ function wireTimesheets() {
   document.querySelectorAll('button[data-detail-events]').forEach(b => b.addEventListener('click', () => {
     openTsDetail(b.dataset.detailEvents, b.dataset.name);
   }));
+  const mab = document.getElementById('tsMarkAbsent');
+  if (mab) mab.addEventListener('click', () => openAbsenceMarker());
   if (state.eventEditor) wireEventEditor();
   if (state.tsDetail) wireTsDetail();
+  if (state.absenceMarker) wireAbsenceMarker();
 }
 
 // ── Per-employee detail modal — Connecteam-style ─────────────────────
@@ -1547,6 +1580,171 @@ async function addEvent() {
     e.error = String(err.message || err);
   } finally {
     e._adding = false;
+  }
+  render();
+}
+
+// ── Mark-absent modal (range × staff) ───────────────────────────────
+// Inserts one absences row per calendar day in [from, to]; idempotent
+// on (staff_id, date). Beats hand-rolling INSERTs in Supabase Studio,
+// which lost a day on the end of Whitney's "whole week" range.
+function openAbsenceMarker(preselectId) {
+  // Default the from/to to today so a single-day mark-absent is one click
+  // away. Pre-fill the staff picker if the user clicked a per-row trigger.
+  const _ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const today = _ymd(new Date());
+  state.absenceMarker = {
+    staffId: preselectId || '',
+    fromDate: today,
+    toDate: today,
+    reason: 'Sick',
+    note: '',
+    busy: false,
+    error: '',
+    success: '',
+  };
+  render();
+}
+
+function renderAbsenceMarker() {
+  const a = state.absenceMarker;
+  const exempt = exemptIdsFromRoster();
+  const roster = (state.data.roster || [])
+    .filter(r => !exempt.has(r.id) && r.active !== false)
+    .slice()
+    .sort((x, y) => (x.name || '').localeCompare(y.name || ''));
+  const staffOpts = ['<option value="">— pick a staff member —</option>']
+    .concat(roster.map(r =>
+      `<option value="${escapeHtml(r.id)}" ${r.id === a.staffId ? 'selected' : ''}>${escapeHtml(r.name)}</option>`
+    )).join('');
+  const reasons = ['Sick', 'Personal', 'Family', 'Approved leave', 'Other'];
+  const reasonOpts = reasons.map(r =>
+    `<option value="${escapeHtml(r)}" ${r === a.reason ? 'selected' : ''}>${escapeHtml(r)}</option>`
+  ).join('');
+  // Day-count preview so the manager sees how many rows the click writes.
+  let dayCount = 0;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(a.fromDate) && /^\d{4}-\d{2}-\d{2}$/.test(a.toDate)) {
+    const f = new Date(a.fromDate + 'T12:00:00Z');
+    const t = new Date(a.toDate   + 'T12:00:00Z');
+    if (t >= f) dayCount = Math.round((t - f) / 86400000) + 1;
+  }
+  return `
+    <div class="modal-back" id="abBack"></div>
+    <div class="modal" role="dialog" style="width:min(520px, calc(100vw - 32px))">
+      <div class="modal-head">
+        <h3>Mark absent</h3>
+        <button class="modal-close" id="abClose">${icon('x', 18, 'var(--muted)')}</button>
+      </div>
+      <div class="modal-body">
+        <div class="ev-help">
+          Inserts one row per day in the range. Re-marking the same day
+          overwrites the reason instead of duplicating.
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;margin-top:6px">
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">
+            Staff
+            <select id="abStaff" style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;text-transform:none;font-weight:500;color:var(--ink)">${staffOpts}</select>
+          </label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;flex:1 1 140px">
+              From
+              <input id="abFrom" type="date" value="${escapeHtml(a.fromDate)}"
+                     style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;flex:1 1 140px">
+              To
+              <input id="abTo" type="date" value="${escapeHtml(a.toDate)}"
+                     style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
+            </label>
+          </div>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">
+            Reason
+            <select id="abReason" style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;text-transform:none;font-weight:500;color:var(--ink)">${reasonOpts}</select>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">
+            Note (optional)
+            <input id="abNote" type="text" value="${escapeHtml(a.note || '')}" placeholder="e.g. doctor's appointment"
+                   style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
+          </label>
+          ${dayCount > 0 ? `<div class="muted" style="font-size:12.5px">Will mark <b style="color:var(--ink)">${dayCount}</b> day${dayCount === 1 ? '' : 's'} absent.</div>` : ''}
+          ${a.error ? `<div class="banner">${escapeHtml(a.error)}</div>` : ''}
+          ${a.success ? `<div class="banner" style="background:var(--greenBg,#E2F1EA);color:var(--green,#2F8F63);border-color:var(--green,#2F8F63)">${escapeHtml(a.success)}</div>` : ''}
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="abCancel">Close</button>
+        <button class="btn primary" id="abSubmit" ${a.busy ? 'disabled' : ''}>${a.busy ? 'Saving…' : 'Mark absent'}</button>
+      </div>
+    </div>`;
+}
+
+function wireAbsenceMarker() {
+  const close = () => { state.absenceMarker = null; render(); };
+  document.getElementById('abBack').addEventListener('click', close);
+  document.getElementById('abClose').addEventListener('click', close);
+  document.getElementById('abCancel').addEventListener('click', close);
+  const a = state.absenceMarker;
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => { a[key] = el.value; });
+  };
+  bind('abStaff',  'staffId');
+  bind('abFrom',   'fromDate');
+  bind('abTo',     'toDate');
+  bind('abReason', 'reason');
+  bind('abNote',   'note');
+  // Live preview: re-render so the "Will mark N days" hint updates.
+  ['abFrom', 'abTo'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => render());
+  });
+  document.getElementById('abSubmit').addEventListener('click', submitAbsence);
+}
+
+async function submitAbsence() {
+  const a = state.absenceMarker;
+  if (a.busy) return;
+  a.busy = true; a.error = ''; a.success = '';
+  // Read the latest field values straight off the DOM in case any change
+  // event missed (e.g. mobile date pickers don't always fire 'input').
+  const get = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  a.staffId  = get('abStaff');
+  a.fromDate = get('abFrom');
+  a.toDate   = get('abTo');
+  a.reason   = get('abReason');
+  a.note     = get('abNote');
+  if (!a.staffId) { a.error = 'Pick a staff member'; a.busy = false; render(); return; }
+  render();
+  try {
+    const res = await api('absences_mark', {
+      staff_id: a.staffId,
+      from_date: a.fromDate,
+      to_date: a.toDate,
+      reason: a.reason,
+      reason_note: a.note,
+    });
+    // Optimistically merge the new rows into the in-memory cache so the
+    // timesheets surface updates without a roundtrip.
+    if (res && res.absences) {
+      const cache = state.data.tsAbsences || [];
+      const idx = new Map(cache.map(r => [`${r.staff_id}|${r.date}`, r]));
+      res.absences.forEach(r => idx.set(`${r.staff_id}|${r.date}`, r));
+      state.data.tsAbsences = Array.from(idx.values()).sort((x, y) => (x.date < y.date ? -1 : 1));
+      // Today's pill on the Dashboard reads from a separate cache.
+      const todayStr = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+      const todayRow = res.absences.find(r => r.date === todayStr);
+      if (todayRow) {
+        const t = state.data.absencesToday || [];
+        if (!t.some(r => r.staff_id === todayRow.staff_id))
+          state.data.absencesToday = t.concat([{ staff_id: todayRow.staff_id, reason: todayRow.reason, reason_note: todayRow.reason_note }]);
+      }
+    }
+    a.success = `Marked ${res.count} day${res.count === 1 ? '' : 's'} absent.`;
+    showToast('Absences saved');
+  } catch (err) {
+    a.error = String(err.message || err);
+  } finally {
+    a.busy = false;
   }
   render();
 }
