@@ -335,15 +335,34 @@ const handlers = {
     const r = await this.roster();
     if (!r.ok) return r;
     const tRange = todayRange();
+    // Widen lower bound by 24h so an OUT that pairs with an IN from
+    // yesterday still resolves. Order by ts so the pair-loop below is
+    // deterministic.
+    const lookback = new Date(new Date(tRange.from).getTime() - 24 * 3.6e6).toISOString();
     const { data: todayEvents, error } = await sb.from('events')
       .select('staff_id, dir, duration_hrs, ts')
-      .gte('ts', tRange.from).lte('ts', tRange.to);
+      .gte('ts', lookback).lte('ts', tRange.to)
+      .order('ts', { ascending: true });
     if (error) return { ok: false, error: error.message };
+    // Pair-first: was previously summing raw duration_hrs — dropped
+    // manual shifts (duration_hrs=null) and trusted stale caches
+    // (Matthew Hallett / Warrick 24:39 pattern). Only count OUTs whose
+    // ts lands inside the actual today range.
     const hrsBy = {};
+    const openIns = {};
+    const fromTs = new Date(tRange.from).getTime();
+    const toTs   = new Date(tRange.to).getTime();
     (todayEvents || []).forEach((e) => {
-      if (e.dir === 'out' && e.duration_hrs != null) {
-        hrsBy[e.staff_id] = (hrsBy[e.staff_id] || 0) + Number(e.duration_hrs);
-      }
+      if (e.dir === 'in') { openIns[e.staff_id] = e; return; }
+      if (e.dir !== 'out') return;
+      const outTs = new Date(e.ts).getTime();
+      if (outTs < fromTs || outTs > toTs) { openIns[e.staff_id] = null; return; }
+      const openIn = openIns[e.staff_id];
+      const hrs = openIn
+        ? Math.max(0, (outTs - new Date(openIn.ts).getTime()) / 3.6e6)
+        : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
+      if (hrs > 0) hrsBy[e.staff_id] = (hrsBy[e.staff_id] || 0) + hrs;
+      openIns[e.staff_id] = null;
     });
     const now = Date.now();
     const team = r.roster.map((a) => {

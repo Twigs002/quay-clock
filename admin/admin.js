@@ -122,6 +122,39 @@ const _SAST_YMD = new Intl.DateTimeFormat('en-CA', {
   year: 'numeric', month: '2-digit', day: '2-digit',
 });
 function sastYmd(d) { return _SAST_YMD.format(d || new Date()); }
+
+// Pair IN→OUT within a flat event list, per staff. Returns
+// [{staff_id, in_ts, out_ts, hrs}]. Uses pair-from-timestamps as the
+// source of truth (matches the Matthew Hallett / Warrick 24:39 fix
+// pattern from PR #28); falls back to the cached `duration_hrs` only
+// for orphan OUTs with no paired IN. Callers who summed raw
+// duration_hrs without pairing were silently dropping manual shifts
+// (duration_hrs=null) and trusting stale caches — both fixed here.
+function pairShifts(events) {
+  const grouped = new Map();
+  (events || []).forEach(e => {
+    if (!grouped.has(e.id)) grouped.set(e.id, []);
+    grouped.get(e.id).push(e);
+  });
+  const shifts = [];
+  grouped.forEach((evs, staffId) => {
+    evs.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    let openIn = null;
+    for (const e of evs) {
+      if (e.action === 'in') { openIn = e; continue; }
+      if (e.action !== 'out') continue;
+      const outTs = new Date(e.ts).getTime();
+      const inTs = openIn ? new Date(openIn.ts).getTime() : null;
+      const hrs = openIn
+        ? Math.max(0, (outTs - inTs) / 3.6e6)
+        : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
+      shifts.push({ staff_id: staffId, in_ts: inTs, out_ts: outTs, hrs });
+      openIn = null;
+    }
+  });
+  return shifts;
+}
+
 function fmtHM(hrs) {
   if (hrs == null || isNaN(hrs)) return '0:00';
   const total = Math.max(0, Math.round(hrs * 60));
@@ -615,11 +648,13 @@ const WEEKLY_TARGET_HOURS = 45;
 function renderWeeklyTargetProgress(team) {
   const events = state.data.weekEvents || [];
   const exempt = exemptIdsFromRoster();
+  // Pair-first: never trust raw duration_hrs for weekly-target bars —
+  // manually-added shifts have null duration and stale caches are common
+  // (Matthew Hallett / Warrick 24:39 pattern).
   const hoursById = new Map();
-  events.forEach(e => {
-    if (exempt.has(e.id)) return;
-    if (e.action !== 'out' || e.duration_hrs == null) return;
-    hoursById.set(e.id, (hoursById.get(e.id) || 0) + Number(e.duration_hrs));
+  pairShifts(events).forEach(sh => {
+    if (exempt.has(sh.staff_id)) return;
+    if (sh.hrs > 0) hoursById.set(sh.staff_id, (hoursById.get(sh.staff_id) || 0) + sh.hrs);
   });
   // Show every non-exempt staff member with the flat 45h target.
   const rows = team
@@ -658,11 +693,12 @@ function renderWeeklyTargetProgress(team) {
 function renderWeekHoursChart() {
   const events = state.data.weekEvents || [];
   const byDay = [0,0,0,0,0,0,0];
-  events.forEach(e => {
-    if (e.action !== 'out' || e.duration_hrs == null) return;
-    const d = new Date(e.ts);
-    const idx = (d.getDay() + 6) % 7;
-    byDay[idx] += e.duration_hrs;
+  // Pair-first — attribute each shift's real duration to the OUT day
+  // instead of trusting duration_hrs which drops manual shifts.
+  pairShifts(events).forEach(sh => {
+    if (sh.hrs <= 0) return;
+    const idx = (new Date(sh.out_ts).getDay() + 6) % 7;
+    byDay[idx] += sh.hrs;
   });
   const max = Math.max(8, ...byDay);
   const todayIdx = (new Date().getDay() + 6) % 7;
@@ -1372,7 +1408,12 @@ function exportTsDetailCSV() {
     if (e.action === 'out') {
       const inDate = openIn ? new Date(openIn.ts) : null;
       const outDate = new Date(e.ts);
-      const hrs = (e.duration_hrs != null) ? Number(e.duration_hrs) : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+      // Pair-first: prefer IN→OUT math over the cached duration_hrs
+      // (was previously inverted — stale-cache exports were the
+      // Warrick 24:39 pattern lurking in the CSV path).
+      const hrs = inDate
+        ? Math.max(0, (outDate - inDate) / 3.6e6)
+        : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
       rows.push([
         sastYmd(inDate || outDate),
         inDate ? fmtTimeOf(inDate) : '',
@@ -2226,12 +2267,19 @@ function exportTimesheetsCSV() {
   const cols = range.kind === 'month' ? monthlyBuckets(range) : weeklyBuckets(range);
   const grid = {};
   roster.forEach(a => { grid[a.id] = { name: a.name, role: a.role, vals: cols.map(_ => 0) }; });
-  events.forEach(e => {
-    if (e.action !== 'out' || e.duration_hrs == null) return;
-    const ts = new Date(e.ts).getTime();
-    if (!grid[e.id]) grid[e.id] = { name: e.name, role: '', vals: cols.map(_ => 0) };
-    const idx = cols.findIndex(c => ts >= c.from && ts <= c.to);
-    if (idx >= 0) grid[e.id].vals[idx] += e.duration_hrs;
+  // Pair-first — attribute each shift's real duration to its IN-time
+  // column (so an overnight shift lands in the day it started). This
+  // was previously summing raw duration_hrs which dropped manual shifts
+  // and trusted stale cache values.
+  pairShifts(events).forEach(sh => {
+    if (sh.hrs <= 0) return;
+    if (!grid[sh.staff_id]) {
+      const r = roster.find(a => a.id === sh.staff_id);
+      grid[sh.staff_id] = { name: (r && r.name) || sh.staff_id, role: (r && r.role) || '', vals: cols.map(_ => 0) };
+    }
+    const anchorTs = sh.in_ts != null ? sh.in_ts : sh.out_ts;
+    const idx = cols.findIndex(c => anchorTs >= c.from && anchorTs <= c.to);
+    if (idx >= 0) grid[sh.staff_id].vals[idx] += sh.hrs;
   });
   // Column header dates depend on period
   const headers = cols.map(c => {
