@@ -112,6 +112,16 @@ async function api(action, payload = {}) {
 
 // ───── HELPERS ───────────────────────────────────────────────────────
 const pad = (n) => String(n).padStart(2, '0');
+// SAST-anchored YYYY-MM-DD. Uses Intl so it returns the correct SAST day
+// even when an admin views from a non-SAST browser (London, Perth, etc.).
+// Replaces `.toISOString().slice(0,10)` which returns UTC — a source of
+// day-shift bugs when viewing past 22:00 SAST (UTC "tomorrow") or from
+// west-of-UTC timezones (UTC "yesterday").
+const _SAST_YMD = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Africa/Johannesburg',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+});
+function sastYmd(d) { return _SAST_YMD.format(d || new Date()); }
 function fmtHM(hrs) {
   if (hrs == null || isNaN(hrs)) return '0:00';
   const total = Math.max(0, Math.round(hrs * 60));
@@ -714,7 +724,7 @@ function hashIdx(s) { let h = 0; for (let i = 0; i < (s||'').length; i++) h = (h
 
 function isToday(start, end) {
   if (!start) return false;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = sastYmd();
   return today >= start && today <= (end || start);
 }
 
@@ -1248,7 +1258,9 @@ function renderTsDetail() {
   // Bucket shifts by ISO week start (Mon).
   const byWeek = new Map();
   shifts.forEach(s => {
-    const wk = startOfWeek(s.date).toISOString().slice(0, 10);
+    // Bucket by SAST-anchored week-Monday date so a shift that crossed
+    // midnight UTC still lands in the SAST week it started.
+    const wk = sastYmd(startOfWeek(s.date));
     if (!byWeek.has(wk)) byWeek.set(wk, []);
     byWeek.get(wk).push(s);
   });
@@ -1262,7 +1274,9 @@ function renderTsDetail() {
     // Daily totals: map dateKey → { rows: shifts that day, total }
     const byDay = {};
     list.forEach(s => {
-      const k = s.date.toISOString().slice(0, 10);
+      // SAST-anchored day-key so shifts collate with absences (which
+      // store SAST calendar dates).
+      const k = sastYmd(s.date);
       if (!byDay[k]) byDay[k] = { date: s.date, rows: [], total: 0 };
       byDay[k].rows.push(s);
       byDay[k].total += s.hrs;
@@ -1360,7 +1374,7 @@ function exportTsDetailCSV() {
       const outDate = new Date(e.ts);
       const hrs = (e.duration_hrs != null) ? Number(e.duration_hrs) : (inDate ? (outDate - inDate) / 3.6e6 : 0);
       rows.push([
-        (inDate || outDate).toISOString().slice(0, 10),
+        sastYmd(inDate || outDate),
         inDate ? fmtTimeOf(inDate) : '',
         fmtTimeOf(outDate),
         fmtHM(hrs),
@@ -1402,8 +1416,8 @@ async function openEventEditor(agentId, agentName) {
     busy: false, error: '', adding: false, loadingHistory: true,
     addDraft: { action: 'in',
                 date: seed.length
-                  ? new Date(seed[seed.length - 1].ts).toISOString().slice(0, 10)
-                  : new Date().toISOString().slice(0, 10),
+                  ? sastYmd(new Date(seed[seed.length - 1].ts))
+                  : sastYmd(),
                 time: '08:00', note: '' },
   };
   render();
@@ -1429,7 +1443,7 @@ async function openEventEditor(agentId, agentName) {
     // in the now-complete history.
     if (all.length) {
       state.eventEditor.addDraft.date =
-        new Date(all[all.length - 1].ts).toISOString().slice(0, 10);
+        sastYmd(new Date(all[all.length - 1].ts));
     }
     render();
   } catch (e) {
