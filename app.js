@@ -262,9 +262,13 @@ function buildMonthSummary(events, now) {
     if (e.action !== 'out') return;
     const inDate = openIn ? new Date(openIn.ts) : null;
     const outDate = new Date(e.ts);
-    const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
-      ? Number(e.duration_hrs)
-      : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+    // Pair-first: prefer IN→OUT math over the cached duration_hrs.
+    // Was previously inverted — user's own timesheet + month summary
+    // were showing stale cached values (the Matthew Hallett / Warrick
+    // 24:39 pattern). Fallback to duration_hrs only for orphan OUTs.
+    const hrs = inDate
+      ? Math.max(0, (outDate - inDate) / 3.6e6)
+      : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
     if (hrs > 0) total += hrs;
     openIn = null;
   });
@@ -317,9 +321,13 @@ function buildTimesheet(events, now) {
     if (e.action !== 'out') return;
     const outDate = new Date(e.ts);
     const inDate = openIn ? new Date(openIn.ts) : null;
-    const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
-      ? Number(e.duration_hrs)
-      : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+    // Pair-first: prefer IN→OUT math over the cached duration_hrs.
+    // Was previously inverted — user's own timesheet + month summary
+    // were showing stale cached values (the Matthew Hallett / Warrick
+    // 24:39 pattern). Fallback to duration_hrs only for orphan OUTs.
+    const hrs = inDate
+      ? Math.max(0, (outDate - inDate) / 3.6e6)
+      : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
     const refDate = inDate || outDate;
     // Attribute to OUT day so the bar chart reflects when the work finished.
     const outIdx = (outDate.getDay() + 6) % 7;
