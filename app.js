@@ -13,6 +13,15 @@ const APPS_SCRIPT_URL =
 const LS_KEY = 'quay_clock_agent_v2';
 // Location was removed from the app on user request — no longer recorded.
 
+// SAST-anchored YYYY-MM-DD, independent of browser timezone. Use this
+// instead of `.toISOString().slice(0,10)` (UTC — shifts past 22:00 SAST)
+// or `d.getFullYear()/…` (browser-local — wrong from off-site admins).
+const _SAST_YMD = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Africa/Johannesburg',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+});
+function sastYmd(d) { return _SAST_YMD.format(d || new Date()); }
+
 // ───── STATE ─────────────────────────────────────────────────────────
 const state = {
   agent: null,           // { id, name, role, team, admin }
@@ -226,7 +235,7 @@ async function loadHome() {
       fixed.setHours(17, 0, 0, 0);
       state.sheet = {
         type: 'forgot',
-        date: fixed.toISOString().slice(0, 10),
+        date: sastYmd(fixed),
         time: '17:00',
         startISO: data.lastIn,
         elapsedHrs,
@@ -1307,7 +1316,7 @@ function renderNoteSheet() {
 function renderLeaveSheet() {
   // Shift-time correction only. Pre-filled with today so it's fast to file.
   const s = state.sheet;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = sastYmd();
   // #27 — header banner is trimmed to sit inside the sheet's body padding
   // (was previously a free-floating title row that visually overflowed).
   // #28 — visible X close button so the form can be dismissed without
@@ -1373,7 +1382,7 @@ function wireSheet() {
       const v = b.dataset.fgQuick;
       if (v === 'now') {
         const now = new Date();
-        state.sheet.date = now.toISOString().slice(0, 10);
+        state.sheet.date = sastYmd(now);
         state.sheet.time = now.toTimeString().slice(0, 5);
       } else {
         state.sheet.time = v;
