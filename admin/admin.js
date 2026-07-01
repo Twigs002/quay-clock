@@ -829,9 +829,13 @@ function renderTimesheetsGrid(range) {
       // Anchor the shift to its IN time so a 22:00→02:00 shift counts in
       // the day it started, not the day it ended.
       const inTs  = openIn ? new Date(openIn.ts).getTime() : outTs;
-      const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
-        ? Number(e.duration_hrs)
-        : Math.max(0, (outTs - inTs) / 3.6e6);
+      // Always prefer the IN→OUT pair over the cached duration_hrs (which
+      // goes stale when an admin edits a timestamp — the Matthew Hallett
+      // 0.068h bug). Fall back to the cached value only for orphan OUTs
+      // that have no paired IN to compute against.
+      const hrs = openIn
+        ? Math.max(0, (outTs - inTs) / 3.6e6)
+        : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
       openIn = null;
       if (!grid[staffId]) {
         grid[staffId] = { name: e.name || staffId, role: '', vals: cols.map(_ => 0), total: 0, days: {} };
@@ -948,9 +952,13 @@ function buildShiftRows(range) {
       const inE = openIns[e.id] || null;
       const inDate = inE ? new Date(inE.ts) : null;
       const outDate = new Date(e.ts);
-      const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
-        ? Number(e.duration_hrs)
-        : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+      // Prefer the IN→OUT pair over the cached duration_hrs (which goes
+      // stale when an admin edits a timestamp without recomputing — the
+      // Matthew Hallett 0.068h bug). Fall back to the cached value only
+      // when the OUT has no paired IN to compute against.
+      const hrs = inDate
+        ? Math.max(0, (outDate - inDate) / 3.6e6)
+        : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
       shifts.push({
         agentId: e.id,
         agentName: e.name || (rosterById[e.id] && rosterById[e.id].name) || e.id,
@@ -1220,9 +1228,12 @@ function renderTsDetail() {
     if (e.action === 'out') {
       const inDate = openIn ? new Date(openIn.ts) : null;
       const outDate = new Date(e.ts);
-      const hrs = (e.duration_hrs != null && !isNaN(e.duration_hrs))
-        ? Number(e.duration_hrs)
-        : (inDate ? (outDate - inDate) / 3.6e6 : 0);
+      // Pair-from-timestamps is the source of truth; duration_hrs is a
+      // cache used only when no paired IN exists. Stops stale cached
+      // values from leaking into per-agent detail panels too.
+      const hrs = inDate
+        ? Math.max(0, (outDate - inDate) / 3.6e6)
+        : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
       shifts.push({
         date: (inDate || outDate),
         tin: inDate ? fmtTimeOf(inDate) : '—',
