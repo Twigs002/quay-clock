@@ -366,7 +366,8 @@ const handlers = {
     const { data, error } = await q;
     if (error) return { ok: false, error: error.message };
     // Decorate with agent_name (cheap join via roster cache).
-    const { data: roster } = await sb.from('staff').select('id, name');
+    // staff_public: safe projection — no hourly_rate/weekly_hours exposure.
+    const { data: roster } = await sb.from('staff_public').select('id, name');
     const nameById = new Map((roster || []).map((s) => [s.id, s.name]));
     // Enrich each request with the staff's ACTUAL clock events on the
     // shift date so the admin reviewer sees "original 08:15 → proposed
