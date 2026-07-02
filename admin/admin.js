@@ -660,10 +660,14 @@ function renderDashboard() {
   `;
 }
 
-// Per-staff weekly clocked-hours vs a flat 45h target for everyone.
+// Per-staff weekly clocked-hours vs each staffer's own contracted target
+// (staff.weekly_hours), falling back to the 45h house default if unset.
 // Sorted most-behind-first so the dashboard surfaces who still owes
 // hours before week-end. Admin / manager rows are excluded (they're
 // exempt from clock-in tracking).
+//
+// Audit finding B4 (P1): was previously hardcoded to 45h for everyone,
+// so a staffer contracted for 40h read as under-target.
 const WEEKLY_TARGET_HOURS = 45;
 
 function renderWeeklyTargetProgress(team) {
@@ -677,12 +681,14 @@ function renderWeeklyTargetProgress(team) {
     if (exempt.has(sh.staff_id)) return;
     if (sh.hrs > 0) hoursById.set(sh.staff_id, (hoursById.get(sh.staff_id) || 0) + sh.hrs);
   });
-  // Show every non-exempt staff member with the flat 45h target.
+  // Show every non-exempt staff member with THEIR OWN contracted target.
   const rows = team
     .filter(s => !exempt.has(s.id))
     .map(s => {
       const hrs = Number(hoursById.get(s.id) || 0);
-      const target = WEEKLY_TARGET_HOURS;
+      const target = (s.weekly_hours != null && s.weekly_hours > 0)
+        ? Number(s.weekly_hours)
+        : WEEKLY_TARGET_HOURS;
       const pct = Math.min(999, (hrs / target) * 100);
       return { id: s.id, name: s.name, role: s.role, hrs, target, pct };
     })
