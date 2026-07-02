@@ -57,6 +57,16 @@ async function boot() {
       // Same-origin fallback for local dev (e.g. file:// or vite preview).
       location.origin,
     ]);
+    // Audit finding C2 (P1): the parent used to send a refresh_token too,
+    // meaning an XSS on this origin could hijack a durable session. Parent
+    // now only ships the short-lived access_token + expires_at. If the
+    // access token approaches expiry, we re-ping the parent for a fresh
+    // one. A `refresh_token` field is honoured for backwards-compat but
+    // is no longer expected on the wire.
+    let _reReadyTimer = null;
+    const _requestFresh = () => {
+      try { window.parent.postMessage({ type: 'quay-admin-ready' }, 'https://twigs002.github.io'); } catch {}
+    };
     window.addEventListener('message', async (ev) => {
       if (!ALLOWED_PARENTS.has(ev.origin)) return;
       const m = ev.data;
@@ -64,8 +74,19 @@ async function boot() {
       try {
         await window.sb.auth.setSession({
           access_token: m.session.access_token,
-          refresh_token: m.session.refresh_token,
+          // '' when parent (post-C2) omits it — session runs until the
+          // access token expires; we'll pre-emptively re-ping below.
+          refresh_token: m.session.refresh_token || '',
         });
+        // Schedule a pre-expiry re-request. expires_at is Unix seconds.
+        if (_reReadyTimer) clearTimeout(_reReadyTimer);
+        if (m.session.expires_at) {
+          const msUntilRefresh = Math.max(
+            5_000,
+            (m.session.expires_at * 1000 - Date.now()) - 60_000,
+          );
+          _reReadyTimer = setTimeout(_requestFresh, msUntilRefresh);
+        }
         const staff = await window.QD.loadSelfStaff();
         if (staff && staff.is_admin) {
           state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true, super: !!staff.is_super, is_super: !!staff.is_super };
@@ -77,7 +98,7 @@ async function boot() {
     });
     // Target the ready ping at the dashboard origin specifically so
     // a wildcard '*' doesn't leak the embed presence to other listeners.
-    try { window.parent.postMessage({ type: 'quay-admin-ready' }, 'https://twigs002.github.io'); } catch {}
+    _requestFresh();
   }
 
   // Try to restore a Supabase session (could be from the parent handoff a
