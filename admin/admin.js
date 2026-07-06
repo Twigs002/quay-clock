@@ -1522,53 +1522,198 @@ async function openEventEditor(agentId, agentName) {
   }
 }
 
+// Variant A timesheet: group events into day-per-row shape.
+// Input: events sorted ascending by ts. Output: [{date, shifts:[{inIdx?,outIdx?}], hasIssues}]
+// A "shift" is an IN paired with the next OUT on the same day. Unpaired
+// ends (missing OUT while still clocked in, or missing IN before an OUT
+// e.g. an auto-clock-out) surface as issue flags on the day.
+function _groupEventsByDay(events) {
+  const byDay = new Map();
+  events.forEach((ev, idx) => {
+    const d = new Date(ev.ts);
+    const key = sastYmd(d);
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push({ ev, idx });
+  });
+  const out = [];
+  const dayKeys = [...byDay.keys()].sort().reverse(); // newest first
+  dayKeys.forEach(key => {
+    const list = byDay.get(key);
+    const shifts = [];
+    let openIn = null;
+    let issues = [];
+    list.forEach(item => {
+      if (item.ev.action === 'in') {
+        if (openIn) {
+          // Two INs in a row on the same day: previous IN never got a paired OUT.
+          shifts.push({ inItem: openIn, outItem: null });
+          issues.push('missing-out');
+        }
+        openIn = item;
+      } else if (item.ev.action === 'out') {
+        if (openIn) {
+          shifts.push({ inItem: openIn, outItem: item });
+          openIn = null;
+        } else {
+          shifts.push({ inItem: null, outItem: item });
+          issues.push('missing-in');
+        }
+      }
+    });
+    if (openIn) {
+      shifts.push({ inItem: openIn, outItem: null });
+      // Only flag as "still clocked in" (not an issue) if it's today.
+      if (key !== sastYmd(new Date())) issues.push('missing-out');
+    }
+    out.push({ date: key, shifts, issues });
+  });
+  return out;
+}
+
+function _fmtDayLabel(ymd) {
+  // "Wed 25 Jun" from a YYYY-MM-DD SAST-anchored date string.
+  const [y, m, d] = ymd.split('-').map(n => parseInt(n, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const wd = dt.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' });
+  const dm = dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  return { wd, dm, year: String(y) };
+}
+
+function _fmtDurationMs(ms) {
+  if (!(ms > 0)) return '0h 0m';
+  const totalMin = Math.round(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}h ${m}m`;
+}
+
+function _hhmmFromTs(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
 function renderEventEditor() {
   const e = state.eventEditor;
-  const items = e.events.map((ev, idx) => {
-    const d = new Date(ev.ts);
-    const date = d.toISOString().slice(0,10);
-    const hh = pad(d.getHours()), mm = pad(d.getMinutes());
-    return `<div class="evrow" data-idx="${idx}">
-      <select class="ev-action">
-        <option value="in"  ${ev.action === 'in'  ? 'selected' : ''}>IN</option>
-        <option value="out" ${ev.action === 'out' ? 'selected' : ''}>OUT</option>
-      </select>
-      <input class="ev-date" type="date" value="${date}">
-      <input class="ev-time" type="time" value="${hh}:${mm}">
-      <input class="ev-note" type="text" value="${escapeHtml(ev.note || '')}" placeholder="note">
-      <button class="btn small" data-save="${idx}">Save</button>
-      <button class="btn small danger" data-del="${idx}">Delete</button>
-    </div>`;
+  const days = _groupEventsByDay(e.events);
+  const todayKey = sastYmd(new Date());
+
+  // Weekly total: sum of paired shifts across all days.
+  let weekMs = 0;
+  days.forEach(day => {
+    day.shifts.forEach(s => {
+      if (s.inItem && s.outItem) {
+        weekMs += new Date(s.outItem.ev.ts) - new Date(s.inItem.ev.ts);
+      }
+    });
+  });
+
+  const rows = days.map(day => {
+    const lbl = _fmtDayLabel(day.date);
+    const isToday = day.date === todayKey;
+    // Primary shift is the FIRST IN + LAST OUT of the day for the summary row.
+    const first = day.shifts[0] || {};
+    const inTime  = first.inItem  ? _hhmmFromTs(first.inItem.ev.ts)  : '';
+    const outTime = first.outItem ? _hhmmFromTs(first.outItem.ev.ts) : '';
+    let dayMs = 0;
+    day.shifts.forEach(s => {
+      if (s.inItem && s.outItem) dayMs += new Date(s.outItem.ev.ts) - new Date(s.inItem.ev.ts);
+    });
+    const isSplit = day.shifts.filter(s => s.inItem && s.outItem).length > 1;
+    const stillOpen = isToday && day.shifts.some(s => s.inItem && !s.outItem);
+    const badges = [];
+    if (isSplit)   badges.push(`<span class="ts-badge">Split shift</span>`);
+    if (stillOpen) badges.push(`<span class="ts-badge ts-badge--live">Still clocked in</span>`);
+    if (day.issues.includes('missing-out') && !stillOpen) badges.push(`<span class="ts-badge ts-badge--warn">Missing OUT</span>`);
+    if (day.issues.includes('missing-in')) badges.push(`<span class="ts-badge ts-badge--warn">Missing IN</span>`);
+    const totalTxt = stillOpen && dayMs === 0 ? '- so far' : _fmtDurationMs(dayMs) + (stillOpen ? ' so far' : '');
+    const inIdx  = first.inItem  ? first.inItem.idx  : '';
+    const outIdx = first.outItem ? first.outItem.idx : '';
+    // Extra shifts on a split-shift day render as a nested list under the summary.
+    const extraShiftsHtml = isSplit ? day.shifts.slice(1).map(s => {
+      const sIn  = s.inItem  ? _hhmmFromTs(s.inItem.ev.ts)  : '';
+      const sOut = s.outItem ? _hhmmFromTs(s.outItem.ev.ts) : '';
+      const sInIdx  = s.inItem  ? s.inItem.idx  : '';
+      const sOutIdx = s.outItem ? s.outItem.idx : '';
+      const sMs = (s.inItem && s.outItem) ? new Date(s.outItem.ev.ts) - new Date(s.inItem.ev.ts) : 0;
+      return `<div class="ts-shift">
+        <span class="ts-shift-lbl">IN</span>
+        <input type="time" class="ts-time" data-shift-in="${sInIdx}" value="${sIn}">
+        <span class="ts-shift-lbl">OUT</span>
+        <input type="time" class="ts-time" data-shift-out="${sOutIdx}" value="${sOut}">
+        <span class="ts-shift-total tnum">${_fmtDurationMs(sMs)}</span>
+      </div>`;
+    }).join('') : '';
+    return `<tr class="ts-row" data-day="${day.date}">
+      <td class="ts-col-day">
+        <div class="ts-day-name">${escapeHtml(lbl.wd + ' ' + lbl.dm)}</div>
+        <div class="ts-day-year">${escapeHtml(lbl.year)}</div>
+        ${badges.length ? `<div class="ts-badges">${badges.join('')}</div>` : ''}
+      </td>
+      <td class="ts-col-in">
+        <input type="time" class="ts-time" data-in-idx="${inIdx}" value="${inTime}" ${inIdx === '' ? 'data-empty="1"' : ''}>
+      </td>
+      <td class="ts-col-out">
+        <input type="time" class="ts-time" data-out-idx="${outIdx}" value="${outTime}" ${outIdx === '' ? 'data-empty="1" placeholder="- -"' : ''}>
+      </td>
+      <td class="ts-col-total tnum">${escapeHtml(totalTxt)}</td>
+      <td class="ts-col-actions">
+        <button class="btn small primary" data-day-save="${day.date}">Save</button>
+        <button class="btn small" data-day-menu="${day.date}" aria-label="More" title="More actions">&#8942;</button>
+      </td>
+      ${isSplit ? `<td colspan="5" class="ts-split-cell">${extraShiftsHtml}</td>` : ''}
+    </tr>`;
   }).join('');
+
   const addBlock = e.adding ? `
-    <div class="evrow add">
+    <div class="ts-addrow">
       <select id="evNewAction">
         <option value="in" ${e.addDraft.action === 'in' ? 'selected' : ''}>IN</option>
         <option value="out" ${e.addDraft.action === 'out' ? 'selected' : ''}>OUT</option>
       </select>
       <input id="evNewDate" type="date" value="${e.addDraft.date}">
       <input id="evNewTime" type="time" value="${e.addDraft.time}">
-      <input id="evNewNote" type="text" value="${escapeHtml(e.addDraft.note)}" placeholder="note">
-      <button class="btn small primary" id="evAdd">Add</button>
+      <input id="evNewNote" type="text" value="${escapeHtml(e.addDraft.note)}" placeholder="note (optional)">
+      <button class="btn small primary" id="evAdd">Add event</button>
       <button class="btn small" id="evAddCancel">Cancel</button>
-    </div>` : `<button class="btn small primary" id="evShowAdd">+ Add event</button>`;
+    </div>` : `<div class="ts-addbtns">
+      <button class="btn small primary" id="evShowAdd">+ Add event</button>
+    </div>`;
+
   return `
     <div class="modal-back" id="evBack"></div>
-    <div class="modal" role="dialog" style="width:min(640px, calc(100vw - 32px))">
+    <div class="modal ts-modal" role="dialog" style="width:min(920px, calc(100vw - 32px))">
       <div class="modal-head">
-        <h3>Edit events — ${escapeHtml(e.agentName)}</h3>
+        <h3>Edit timesheet: ${escapeHtml(e.agentName)}</h3>
         <button class="modal-close" id="evClose">${icon('x', 18, 'var(--muted)')}</button>
       </div>
       <div class="modal-body">
         <div class="ev-help">
-          Manually adjust this agent's clock events across any cycle.
-          Pair each IN with an OUT for the duration to count.
-          ${e.loadingHistory ? `<span class="muted" style="margin-left:6px">· Loading full history…</span>` : ''}
+          Each row is one day. Edit the IN and OUT times, click Save on that row.
+          ${e.loadingHistory ? `<span class="muted" style="margin-left:6px">Loading full history...</span>` : ''}
         </div>
-        ${e.events.length === 0 ? `<div class="muted" style="font-size:13px;padding:6px 0">${e.loadingHistory ? 'Loading events for this agent…' : 'No events found for this agent.'}</div>` : ''}
-        ${items}
+        ${e.events.length === 0 ? `<div class="muted" style="font-size:13px;padding:6px 0">${e.loadingHistory ? 'Loading events for this agent...' : 'No events found for this agent.'}</div>` : `
+        <table class="ts-table">
+          <thead>
+            <tr>
+              <th class="ts-col-day">Day</th>
+              <th class="ts-col-in">In</th>
+              <th class="ts-col-out">Out</th>
+              <th class="ts-col-total tnum">Total</th>
+              <th class="ts-col-actions"></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3" class="ts-foot-label">Total across shown days</td>
+              <td class="ts-foot-total tnum">${_fmtDurationMs(weekMs)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>`}
         ${e.error ? `<div class="banner">${escapeHtml(e.error)}</div>` : ''}
-        <div style="margin-top:6px">${addBlock}</div>
+        <div style="margin-top:12px">${addBlock}</div>
       </div>
       <div class="modal-foot">
         <button class="btn" id="evDone">Done</button>
@@ -1582,10 +1727,13 @@ function wireEventEditor() {
   document.getElementById('evClose').addEventListener('click', close);
   document.getElementById('evDone').addEventListener('click', close);
 
-  document.querySelectorAll('.evrow[data-idx]').forEach(row => {
-    const idx = Number(row.dataset.idx);
-    row.querySelector('button[data-save]').addEventListener('click', () => saveEvent(idx, row));
-    row.querySelector('button[data-del]').addEventListener('click', () => deleteEvent(idx));
+  // Day-per-row saves + menus. Save fires event_update for whichever of the
+  // day's IN and OUT rows changed vs the current DB timestamp.
+  document.querySelectorAll('button[data-day-save]').forEach(btn => {
+    btn.addEventListener('click', () => saveDayShift(btn.dataset.daySave));
+  });
+  document.querySelectorAll('button[data-day-menu]').forEach(btn => {
+    btn.addEventListener('click', (ev) => openDayMenu(btn.dataset.dayMenu, ev.currentTarget));
   });
 
   const showAdd = document.getElementById('evShowAdd');
@@ -1594,6 +1742,84 @@ function wireEventEditor() {
   if (cancel) cancel.addEventListener('click', () => { state.eventEditor.adding = false; render(); });
   const addBtn = document.getElementById('evAdd');
   if (addBtn) addBtn.addEventListener('click', addEvent);
+}
+
+// Save any changes to the primary IN and OUT of a day. Uses the existing
+// event_update / event_add / event_delete API atoms; batches per-row.
+async function saveDayShift(dateKey) {
+  const e = state.eventEditor;
+  const row = document.querySelector(`tr.ts-row[data-day="${dateKey}"]`);
+  if (!row || !e) return;
+  const inInput  = row.querySelector('input[data-in-idx]');
+  const outInput = row.querySelector('input[data-out-idx]');
+  const inIdxStr  = inInput  ? inInput.dataset.inIdx  : '';
+  const outIdxStr = outInput ? outInput.dataset.outIdx : '';
+  const inNew  = inInput  ? inInput.value  : '';
+  const outNew = outInput ? outInput.value : '';
+  try {
+    // Update IN row if one exists and the time changed.
+    if (inIdxStr !== '' && inNew) {
+      const ev = e.events[Number(inIdxStr)];
+      const currentHHMM = _hhmmFromTs(ev.ts);
+      if (currentHHMM !== inNew) {
+        const newTs = new Date(dateKey + 'T' + inNew + ':00').toISOString();
+        await api('event_update', {
+          agent_id: e.agentId, ts: ev.ts, new_ts: newTs, dir: ev.action, note: ev.note || '',
+        });
+        e.events[Number(inIdxStr)] = { ...ev, ts: newTs };
+      }
+    } else if (inIdxStr === '' && inNew) {
+      // No prior IN, user typed one; insert.
+      const newTs = new Date(dateKey + 'T' + inNew + ':00').toISOString();
+      await api('event_add', { agent_id: e.agentId, ts: newTs, dir: 'in', note: '' });
+      e.events.push({ ts: newTs, action: 'in', note: '' });
+    }
+    // Update OUT row.
+    if (outIdxStr !== '' && outNew) {
+      const ev = e.events[Number(outIdxStr)];
+      const currentHHMM = _hhmmFromTs(ev.ts);
+      if (currentHHMM !== outNew) {
+        const newTs = new Date(dateKey + 'T' + outNew + ':00').toISOString();
+        await api('event_update', {
+          agent_id: e.agentId, ts: ev.ts, new_ts: newTs, dir: ev.action, note: ev.note || '',
+        });
+        e.events[Number(outIdxStr)] = { ...ev, ts: newTs };
+      }
+    } else if (outIdxStr === '' && outNew) {
+      const newTs = new Date(dateKey + 'T' + outNew + ':00').toISOString();
+      await api('event_add', { agent_id: e.agentId, ts: newTs, dir: 'out', note: '' });
+      e.events.push({ ts: newTs, action: 'out', note: '' });
+    }
+    // Re-sort so the day grouper stays consistent after inserts.
+    e.events.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    e.error = '';
+    showToast('Saved');
+  } catch (err) {
+    e.error = String(err.message || err);
+  }
+  render();
+}
+
+// Simple confirm menu for a day: delete every event on this date.
+async function openDayMenu(dateKey, anchor) {
+  const e = state.eventEditor;
+  if (!e) return;
+  const action = window.prompt(
+    `Day ${dateKey} - type an action:\n\n` +
+    `  delete   remove ALL events on this day\n` +
+    `  cancel   do nothing\n`,
+    'cancel');
+  if (!action || action.toLowerCase() === 'cancel') return;
+  if (action.toLowerCase() === 'delete') {
+    if (!confirm(`Delete all clock events on ${dateKey}? This cannot be undone.`)) return;
+    const dayEvents = e.events.filter(ev => sastYmd(new Date(ev.ts)) === dateKey);
+    for (const ev of dayEvents) {
+      try { await api('event_delete', { agent_id: e.agentId, ts: ev.ts }); } catch {}
+    }
+    e.events = e.events.filter(ev => sastYmd(new Date(ev.ts)) !== dateKey);
+    showToast('Day deleted');
+    render();
+  }
 }
 
 async function saveEvent(idx, row) {

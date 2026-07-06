@@ -560,6 +560,81 @@ td.reason-cell.details-open .reason-text {
 }
 .evrow select:focus, .evrow input:focus { border-color: var(--blue); }
 .evrow .ev-note { width: 100%; }
+
+/* Variant A timesheet: day-per-row edit modal. Each row shows a day's
+   IN + OUT + total; split shifts add a sub-row list below. Replaces the
+   old event-per-row layout that showed two rows per day and confused
+   admins on payroll runs. */
+.ts-modal { max-width: 920px; }
+.ts-table {
+  width: 100%; border-collapse: collapse; margin-top: 10px;
+  font-family: Montserrat, system-ui, sans-serif;
+}
+.ts-table th {
+  text-align: left; color: var(--muted); font-weight: 700;
+  font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 10px 8px; border-bottom: 1px solid var(--line);
+}
+.ts-table td {
+  padding: 12px 8px; border-bottom: 1px solid var(--line);
+  vertical-align: middle; font-size: 13px; color: var(--ink);
+}
+.ts-col-day { width: 150px; }
+.ts-day-name { font-weight: 700; color: var(--ink); }
+.ts-day-year { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.ts-badges { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+.ts-badge {
+  display: inline-block; font-size: 9.5px; font-weight: 700;
+  padding: 2px 7px; border-radius: 999px;
+  background: #EEF0F6; color: #475569;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.ts-badge--live { background: #DCF3E5; color: #0E6B3A; }
+.ts-badge--warn { background: #FFE9CB; color: #6B3F00; }
+.ts-time {
+  font-family: inherit; font-size: 13px;
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: #fff; color: var(--ink); width: 110px; outline: none;
+}
+.ts-time:focus { border-color: var(--blue); }
+.ts-time[data-empty="1"] { background: #F8FAFD; }
+.ts-col-total { font-weight: 700; color: var(--ink); }
+.ts-col-actions { white-space: nowrap; }
+.ts-col-actions .btn { margin-left: 4px; }
+.ts-foot-label { text-align: right; color: var(--muted); font-weight: 700; padding: 14px 8px; }
+.ts-foot-total { font-size: 15px; color: var(--ink); font-weight: 800; padding: 14px 8px; }
+.ts-split-cell {
+  background: #F8FAFD; padding: 8px 12px 12px 158px !important;
+  border-bottom: 1px solid var(--line);
+}
+.ts-shift {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; background: #fff; border-radius: 8px;
+  border: 1px solid var(--line); margin-bottom: 6px; max-width: 520px;
+}
+.ts-shift-lbl { font-size: 10px; color: var(--muted); font-weight: 800; letter-spacing: 0.04em; }
+.ts-shift-total { margin-left: auto; font-weight: 700; }
+.ts-addrow {
+  display: grid; gap: 8px; align-items: center;
+  grid-template-columns: 78px 142px 96px 1fr auto auto;
+  padding: 10px 12px; background: #F8FAFD; border-radius: 10px;
+  border: 1px solid var(--line);
+}
+.ts-addrow select, .ts-addrow input {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; font-family: Montserrat;
+  color: var(--ink); background: #fff; outline: none; min-width: 0;
+}
+.ts-addbtns { display: flex; gap: 8px; }
+
+@media (max-width: 720px) {
+  .ts-table thead { display: none; }
+  .ts-table tr { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+  .ts-table td { display: flex; justify-content: space-between; padding: 6px 4px; border: 0; }
+  .ts-col-actions { justify-content: flex-end; }
+  .ts-split-cell { padding: 8px 4px !important; }
+}
+
 .toast {
   position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
   background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 12px;
