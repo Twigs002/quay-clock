@@ -1593,6 +1593,12 @@ function _hhmmFromTs(ts) {
   return pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
+// Small red flag glyph used on missing-IN / missing-OUT badges. Inline
+// SVG so it colour-inherits from the badge without needing an icon set.
+function _flagGlyph() {
+  return `<svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor" style="margin-right:3px;vertical-align:-1px"><path d="M2 1v10h1.4V7h5.2l-.7-1.5.7-1.5H3.4V1H2z"/></svg>`;
+}
+
 function renderEventEditor() {
   const e = state.eventEditor;
   const days = _groupEventsByDay(e.events);
@@ -1624,8 +1630,11 @@ function renderEventEditor() {
     const badges = [];
     if (isSplit)   badges.push(`<span class="ts-badge">Split shift</span>`);
     if (stillOpen) badges.push(`<span class="ts-badge ts-badge--live">Still clocked in</span>`);
-    if (day.issues.includes('missing-out') && !stillOpen) badges.push(`<span class="ts-badge ts-badge--warn">Missing OUT</span>`);
-    if (day.issues.includes('missing-in')) badges.push(`<span class="ts-badge ts-badge--warn">Missing IN</span>`);
+    const missingOut = day.issues.includes('missing-out') && !stillOpen;
+    const missingIn  = day.issues.includes('missing-in');
+    if (missingOut) badges.push(`<span class="ts-badge ts-badge--flag">${_flagGlyph()} Missing OUT</span>`);
+    if (missingIn)  badges.push(`<span class="ts-badge ts-badge--flag">${_flagGlyph()} Missing IN</span>`);
+    const rowFlag = missingOut || missingIn;
     const totalTxt = stillOpen && dayMs === 0 ? '- so far' : _fmtDurationMs(dayMs) + (stillOpen ? ' so far' : '');
     const inIdx  = first.inItem  ? first.inItem.idx  : '';
     const outIdx = first.outItem ? first.outItem.idx : '';
@@ -1644,17 +1653,17 @@ function renderEventEditor() {
         <span class="ts-shift-total tnum">${_fmtDurationMs(sMs)}</span>
       </div>`;
     }).join('') : '';
-    return `<tr class="ts-row" data-day="${day.date}">
+    return `<tr class="ts-row${rowFlag ? ' ts-row--flag' : ''}" data-day="${day.date}">
       <td class="ts-col-day">
         <div class="ts-day-name">${escapeHtml(lbl.wd + ' ' + lbl.dm)}</div>
         <div class="ts-day-year">${escapeHtml(lbl.year)}</div>
         ${badges.length ? `<div class="ts-badges">${badges.join('')}</div>` : ''}
       </td>
       <td class="ts-col-in">
-        <input type="time" class="ts-time" data-in-idx="${inIdx}" value="${inTime}" ${inIdx === '' ? 'data-empty="1"' : ''}>
+        <input type="time" class="ts-time${missingIn ? ' ts-time--flag' : ''}" data-in-idx="${inIdx}" value="${inTime}" ${inIdx === '' ? 'data-empty="1"' : ''}>
       </td>
       <td class="ts-col-out">
-        <input type="time" class="ts-time" data-out-idx="${outIdx}" value="${outTime}" ${outIdx === '' ? 'data-empty="1" placeholder="- -"' : ''}>
+        <input type="time" class="ts-time${missingOut ? ' ts-time--flag' : ''}" data-out-idx="${outIdx}" value="${outTime}" ${outIdx === '' ? 'data-empty="1" placeholder="- -"' : ''}>
       </td>
       <td class="ts-col-total tnum">${escapeHtml(totalTxt)}</td>
       <td class="ts-col-actions">

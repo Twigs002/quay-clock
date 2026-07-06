@@ -591,6 +591,23 @@ td.reason-cell.details-open .reason-text {
 }
 .ts-badge--live { background: #DCF3E5; color: #0E6B3A; }
 .ts-badge--warn { background: #FFE9CB; color: #6B3F00; }
+/* Red flag on a day where an IN or OUT event never landed. Louder than
+   warn: solid red pill so a manager scanning a whole week's timesheet
+   spots the day that needs a correction without having to read every
+   row. Applied via ts-badge--flag on the pill + ts-row--flag on the
+   whole row + ts-time--flag on the empty input itself. */
+.ts-badge--flag {
+  background: #B23434; color: #fff;
+  display: inline-flex; align-items: center;
+}
+.ts-row--flag > td { background: #FFF3F3; }
+.ts-row--flag > .ts-col-day { border-left: 3px solid #B23434; }
+.ts-time--flag {
+  border-color: #B23434 !important;
+  background: #FFEAEA !important;
+  color: #B23434 !important;
+}
+.ts-time--flag:focus { border-color: #B23434 !important; box-shadow: 0 0 0 2px #FFCCCC; }
 .ts-time {
   font-family: inherit; font-size: 13px;
   padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
