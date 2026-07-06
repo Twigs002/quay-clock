@@ -140,6 +140,54 @@ async function recomputePairDurations(staffId, aroundIso) {
   return { ok: true, rewrote: writes.length };
 }
 
+// Apply a request row's proposed in/out times to the events table for the
+// shift date. Called by leave_decide when a Shift change / Time correction
+// is approved. All timestamps are anchored in SAST (Africa/Johannesburg,
+// UTC+2, no DST) via an explicit +02:00 offset — the admin's browser tz
+// must not shift Jun 29 08:00 SAST to Jun 28 22:00 UTC or a Perth admin
+// approval would land on the wrong day in events.ts.
+async function _applyRequestToEvents(req, adminName) {
+  const staffId = req.staff_id;
+  const date    = req.start_date;
+  const note    = `Approved ${req.type || 'request'} by ${adminName || 'admin'}`;
+  const sastIso = (t) => new Date(`${date}T${t}:00+02:00`).toISOString();
+  const dayFrom = sastIso('00:00');
+  const dayTo   = new Date(new Date(dayFrom).getTime() + 24 * 3.6e6).toISOString();
+  const { data: existing, error: readErr } = await sb.from('events')
+    .select('id, ts, dir')
+    .eq('staff_id', staffId)
+    .gte('ts', dayFrom).lt('ts', dayTo)
+    .order('ts', { ascending: true });
+  if (readErr) return { error: readErr.message };
+  const firstIn  = (existing || []).find(e => e.dir === 'in');
+  const lastOut  = [...(existing || [])].reverse().find(e => e.dir === 'out');
+  const writes = [];
+  const upsert = async (dir, time, anchor) => {
+    if (!time) return;
+    // proposed_start / proposed_end come from Postgres time columns as
+    // 'HH:MM:SS' or 'HH:MM' — trim to HH:MM before appending the offset.
+    const iso = sastIso(String(time).slice(0, 5));
+    if (anchor) {
+      const { error } = await sb.from('events').update({ ts: iso, note }).eq('id', anchor.id);
+      if (error) throw new Error(`update ${dir}: ${error.message}`);
+    } else {
+      const { error } = await sb.from('events').insert({
+        staff_id: staffId, ts: iso, dir, note, duration_hrs: null,
+      });
+      if (error) throw new Error(`insert ${dir}: ${error.message}`);
+    }
+    writes.push(iso);
+  };
+  try {
+    await upsert('in',  req.proposed_start, firstIn);
+    await upsert('out', req.proposed_end,   lastOut);
+  } catch (e) { return { error: e.message }; }
+  // Recompute duration_hrs on the affected OUT rows so the timesheet's
+  // sum-of-durations reflects the corrected shift.
+  if (writes.length) await recomputePairDurations(staffId, writes[writes.length - 1]);
+  return { ok: true, changed: writes.length };
+}
+
 async function sumHoursForAgent(staffId, fromIso, toIso) {
   // Pair IN→OUT in the window and compute hours from the pair, falling
   // back to the cached duration_hrs only for orphan OUTs. Stops the PWA
@@ -473,13 +521,32 @@ const handlers = {
       return { ok: false, error: 'Need id + status(Approved|Declined)' };
     const me = _selfStaff || await loadSelfStaff();
     if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
+    // On approval of a Shift change / Time correction, apply the proposed
+    // in/out times to the events table — updating an existing event on the
+    // shift date if present, inserting a fresh one if not. Without this,
+    // approving a request only flips its status and the timesheet still
+    // reads the original (or empty) events, so admins saw approvals do
+    // nothing to Gio's Jun 29 hours.
+    let applied = null;
+    if (status === 'Approved') {
+      const { data: req, error: readErr } = await sb.from('requests')
+        .select('staff_id, start_date, proposed_start, proposed_end, type')
+        .eq('id', id).single();
+      if (readErr) return { ok: false, error: readErr.message };
+      if (req && req.start_date && (req.proposed_start || req.proposed_end)) {
+        applied = await _applyRequestToEvents(req, me.name);
+        if (applied && applied.error) {
+          return { ok: false, error: `Could not adjust timesheet: ${applied.error}` };
+        }
+      }
+    }
     const { error } = await sb.from('requests').update({
       status,
       decided_by: me.name,
       decided_at: new Date().toISOString(),
     }).eq('id', id);
     if (error) return { ok: false, error: error.message };
-    return { ok: true };
+    return { ok: true, applied };
   },
 
   // Admin PIN check translates to the same login flow (server verifies
