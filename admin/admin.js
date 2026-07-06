@@ -1800,17 +1800,30 @@ async function saveDayShift(dateKey) {
   render();
 }
 
-// Simple confirm menu for a day: delete every event on this date.
+// Per-day action menu on the Variant A timesheet. Offers the actions an
+// admin actually needs on a payroll timesheet: delete all events for the
+// day, back-date an absence (sick or other), or clear a stray absence
+// row. Uses window.prompt for now; upgrade to a proper dropdown once
+// this proves out.
 async function openDayMenu(dateKey, anchor) {
   const e = state.eventEditor;
   if (!e) return;
+  const today = sastYmd(new Date());
+  const isPastOrToday = dateKey <= today;
   const action = window.prompt(
     `Day ${dateKey} - type an action:\n\n` +
-    `  delete   remove ALL events on this day\n` +
+    (isPastOrToday
+      ? `  sick     mark this day as SICK (unpaid)\n` +
+        `  absent   mark this day as ABSENT (unpaid)\n` +
+        `  clear    clear any absence row for this day\n`
+      : '') +
+    `  delete   remove ALL clock events on this day\n` +
     `  cancel   do nothing\n`,
     'cancel');
-  if (!action || action.toLowerCase() === 'cancel') return;
-  if (action.toLowerCase() === 'delete') {
+  if (!action) return;
+  const a = action.toLowerCase().trim();
+  if (a === 'cancel') return;
+  if (a === 'delete') {
     if (!confirm(`Delete all clock events on ${dateKey}? This cannot be undone.`)) return;
     const dayEvents = e.events.filter(ev => sastYmd(new Date(ev.ts)) === dateKey);
     for (const ev of dayEvents) {
@@ -1819,6 +1832,33 @@ async function openDayMenu(dateKey, anchor) {
     e.events = e.events.filter(ev => sastYmd(new Date(ev.ts)) !== dateKey);
     showToast('Day deleted');
     render();
+    return;
+  }
+  if (a === 'sick' || a === 'absent') {
+    // Reuse the existing absence-marker modal; it already handles the
+    // single-day case, the (staff_id, date) upsert, RLS, and error banner.
+    // Sick is unpaid at Quay same as absent (no paid-hours branching).
+    const reason = a === 'sick' ? 'Sick' : 'Other';
+    // Close the timesheet modal first so the absence modal stacks cleanly.
+    state.eventEditor = null;
+    openAbsenceMarker(e.agentId, { date: dateKey, reason });
+    return;
+  }
+  if (a === 'clear') {
+    // Delete any absence rows for this staff on this date.
+    if (!window.sb) { e.error = 'Supabase client not ready'; render(); return; }
+    try {
+      const { error } = await window.sb.from('absences')
+        .delete()
+        .eq('staff_id', e.agentId)
+        .eq('date', dateKey);
+      if (error) throw error;
+      showToast('Absence cleared');
+    } catch (err) {
+      e.error = 'Could not clear absence: ' + String(err.message || err);
+    }
+    render();
+    return;
   }
 }
 
@@ -1907,16 +1947,20 @@ async function addEvent() {
 // Inserts one absences row per calendar day in [from, to]; idempotent
 // on (staff_id, date). Beats hand-rolling INSERTs in Supabase Studio,
 // which lost a day on the end of Whitney's "whole week" range.
-function openAbsenceMarker(preselectId) {
+function openAbsenceMarker(preselectId, opts) {
   // Default the from/to to today so a single-day mark-absent is one click
   // away. Pre-fill the staff picker if the user clicked a per-row trigger.
+  // opts: { date, reason } lets the timesheet's day-row menu launch this
+  // pre-filled for back-dating a past day directly.
   const _ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const today = _ymd(new Date());
+  const seedDate   = (opts && opts.date)   || today;
+  const seedReason = (opts && opts.reason) || 'Sick';
   state.absenceMarker = {
     staffId: preselectId || '',
-    fromDate: today,
-    toDate: today,
-    reason: 'Sick',
+    fromDate: seedDate,
+    toDate: seedDate,
+    reason: seedReason,
     note: '',
     busy: false,
     error: '',
