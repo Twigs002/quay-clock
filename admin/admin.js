@@ -320,6 +320,12 @@ async function loadAll() {
     // Today's absences power the Dashboard's Absent stat + per-row
     // 'Absent · Sick' pill in the 'Who's working now' table.
     state.data.absencesToday = await loadAbsencesToday();
+    // SA public holidays (unpaid, same rule as absence). Loaded once per
+    // session so the Variant A timesheet + payroll flags them without
+    // re-fetching. Map<observed_date_ymd, {name, observed, date}>.
+    if (!state.data.publicHolidays || state.data.publicHolidays.size === 0) {
+      state.data.publicHolidays = await loadPublicHolidays();
+    }
     // Initial Timesheets payload mirrors the dashboard's current-week events.
     if (state.tsPeriod === 'this-week') {
       state.data.tsEvents = state.data.weekEvents;
@@ -330,6 +336,29 @@ async function loadAll() {
     state.error = e.message;
   } finally {
     state.loading = false; render();
+  }
+}
+
+// SA public holidays are UNPAID at Quay 1 (same rule as absence / sick).
+// Load the seed table once per session and cache in state.data.publicHolidays
+// as a Map<date-string, {name, observed}>. Payroll aggregation and the
+// Variant A timesheet consult this to zero paid hours on holiday days.
+async function loadPublicHolidays() {
+  if (!window.sb) return new Map();
+  try {
+    const { data, error } = await window.sb
+      .from('sa_public_holidays')
+      .select('date,name,observed_date');
+    if (error) throw error;
+    const m = new Map();
+    (data || []).forEach(r => {
+      const key = r.observed_date || r.date;
+      m.set(key, { name: r.name, observed: r.observed_date, date: r.date });
+    });
+    return m;
+  } catch (e) {
+    console.warn('[public-holidays] load failed', e);
+    return new Map();
   }
 }
 
@@ -1603,10 +1632,16 @@ function renderEventEditor() {
   const e = state.eventEditor;
   const days = _groupEventsByDay(e.events);
   const todayKey = sastYmd(new Date());
+  const publicHolidays = state.data.publicHolidays || new Map();
 
-  // Weekly total: sum of paired shifts across all days.
+  // Weekly total: sum of PAID shifts across all days. Public holidays
+  // are UNPAID at Quay 1 (same rule as absence + sick), so their clocked
+  // duration does not count toward the weekly total even when the staff
+  // member happened to work that day. The clock times still render on
+  // the row for record-keeping.
   let weekMs = 0;
   days.forEach(day => {
+    if (publicHolidays.has(day.date)) return;
     day.shifts.forEach(s => {
       if (s.inItem && s.outItem) {
         weekMs += new Date(s.outItem.ev.ts) - new Date(s.inItem.ev.ts);
@@ -1627,7 +1662,9 @@ function renderEventEditor() {
     });
     const isSplit = day.shifts.filter(s => s.inItem && s.outItem).length > 1;
     const stillOpen = isToday && day.shifts.some(s => s.inItem && !s.outItem);
+    const holiday = publicHolidays.get(day.date);
     const badges = [];
+    if (holiday)   badges.push(`<span class="ts-badge ts-badge--holiday" title="${escapeHtml(holiday.name)} - unpaid">Public holiday</span>`);
     if (isSplit)   badges.push(`<span class="ts-badge">Split shift</span>`);
     if (stillOpen) badges.push(`<span class="ts-badge ts-badge--live">Still clocked in</span>`);
     const missingOut = day.issues.includes('missing-out') && !stillOpen;
@@ -1635,7 +1672,12 @@ function renderEventEditor() {
     if (missingOut) badges.push(`<span class="ts-badge ts-badge--flag">${_flagGlyph()} Missing OUT</span>`);
     if (missingIn)  badges.push(`<span class="ts-badge ts-badge--flag">${_flagGlyph()} Missing IN</span>`);
     const rowFlag = missingOut || missingIn;
-    const totalTxt = stillOpen && dayMs === 0 ? '- so far' : _fmtDurationMs(dayMs) + (stillOpen ? ' so far' : '');
+    // Public-holiday days: clocked time still displays for the record but
+    // the paid total is zero. Show "worked X but unpaid" instead of the
+    // usual duration so the manager sees WHY the payroll total ignores it.
+    const totalTxt = holiday
+      ? (dayMs > 0 ? `${_fmtDurationMs(dayMs)} worked - unpaid` : '0h 0m (holiday)')
+      : (stillOpen && dayMs === 0 ? '- so far' : _fmtDurationMs(dayMs) + (stillOpen ? ' so far' : ''));
     const inIdx  = first.inItem  ? first.inItem.idx  : '';
     const outIdx = first.outItem ? first.outItem.idx : '';
     // Extra shifts on a split-shift day render as a nested list under the summary.
@@ -1653,7 +1695,7 @@ function renderEventEditor() {
         <span class="ts-shift-total tnum">${_fmtDurationMs(sMs)}</span>
       </div>`;
     }).join('') : '';
-    return `<tr class="ts-row${rowFlag ? ' ts-row--flag' : ''}" data-day="${day.date}">
+    return `<tr class="ts-row${rowFlag ? ' ts-row--flag' : ''}${holiday ? ' ts-row--holiday' : ''}" data-day="${day.date}">
       <td class="ts-col-day">
         <div class="ts-day-name">${escapeHtml(lbl.wd + ' ' + lbl.dm)}</div>
         <div class="ts-day-year">${escapeHtml(lbl.year)}</div>

@@ -591,6 +591,14 @@ td.reason-cell.details-open .reason-text {
 }
 .ts-badge--live { background: #DCF3E5; color: #0E6B3A; }
 .ts-badge--warn { background: #FFE9CB; color: #6B3F00; }
+/* SA public holiday: unpaid at Quay 1 regardless of whether staff
+   clocked in. Amber-tinted row with an amber pill so the manager can
+   see WHY the paid total is zero on this day, distinct from a data
+   gap (red flag) or the plain clocked-out styling. */
+.ts-badge--holiday { background: #E8DFF5; color: #4B2A87; }
+.ts-row--holiday > td { background: #FBF7FF; }
+.ts-row--holiday > .ts-col-day { border-left: 3px solid #7A4FCE; }
+.ts-row--holiday .ts-col-total { color: #6B4CB4; font-style: italic; }
 /* Red flag on a day where an IN or OUT event never landed. Louder than
    warn: solid red pill so a manager scanning a whole week's timesheet
    spots the day that needs a correction without having to read every
