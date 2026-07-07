@@ -30,7 +30,42 @@
 <script src="app.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // Show a one-tap "Refresh" pill when a newly shipped version has
+      // installed, so staff pick up changes without fully closing the app.
+      function offerUpdate() {
+        if (document.getElementById('swUpdate')) return;
+        var bar = document.createElement('div');
+        bar.id = 'swUpdate';
+        bar.className = 'sw-update';
+        bar.innerHTML =
+          '<span class="sw-update-txt">Update available</span>' +
+          '<button class="sw-update-btn" type="button">Refresh</button>' +
+          '<button class="sw-update-x" type="button" aria-label="Dismiss">×</button>';
+        bar.querySelector('.sw-update-btn').addEventListener('click', function () {
+          window.location.reload();
+        });
+        bar.querySelector('.sw-update-x').addEventListener('click', function () {
+          bar.remove();
+        });
+        document.body.appendChild(bar);
+      }
+      // An update finished installing before this page loaded.
+      if (reg.waiting && navigator.serviceWorker.controller) offerUpdate();
+      // A new version installs during this session.
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate();
+        });
+      });
+      // PWAs are usually reopened (backgrounded), not reloaded — re-check for
+      // a new version each time the app becomes visible again.
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') reg.update().catch(function () {});
+      });
+    }).catch(function () {});
   }
 </script>
 </body>
