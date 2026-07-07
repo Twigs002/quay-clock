@@ -1,0 +1,13 @@
+-- 2026-07-07 — correct the weekly_hours house default from 40h to 45h.
+--
+-- schema-payroll-and-shifts.sql originally blanket-backfilled every staff
+-- row to weekly_hours = 40. The real Quay 1 working week is 45h: 9h/day,
+-- which INCLUDES the paid 2x15m teas + 30m lunch (staff stay clocked in
+-- through breaks, so break time is never deducted). With every row stored
+-- at 40, the clock app's /me endpoint (which honours each staffer's own
+-- weekly_hours) kept resetting the home screen to a 40h target — staff saw
+-- a phantom 5h shortfall.
+--
+-- The user confirmed EVERY staffer is on the 45h full-time week (no
+-- part-time exceptions), so this sets all rows to 45.
+update public.staff set weekly_hours = 45;

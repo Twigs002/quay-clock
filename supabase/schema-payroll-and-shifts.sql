@@ -16,4 +16,7 @@ alter table public.requests
   add column if not exists proposed_end   time;
 
 -- Backfill a sensible weekly_hours default for existing rows.
-update public.staff set weekly_hours = 40 where weekly_hours is null;
+-- 45h = 9h/day incl. the PAID 2x15m teas + 30m lunch (staff stay clocked
+-- in through breaks, so breaks are never deducted). See migration
+-- 2026-07-07_weekly_hours_45.sql, which corrects the original 40h backfill.
+update public.staff set weekly_hours = 45 where weekly_hours is null;
