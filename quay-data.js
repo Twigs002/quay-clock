@@ -267,7 +267,11 @@ const handlers = {
       agent: publicAgent(staff),
       status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
       lastNote: st.lastNote,
-      todayHrs, weekHrs, weekTarget: 40,
+      // Weekly target honours each staffer's own contracted hours,
+      // falling back to the 45h house default (9h/day incl. PAID teas +
+      // lunch — breaks are never deducted, staff stay clocked in).
+      todayHrs, weekHrs,
+      weekTarget: (staff.weekly_hours != null && staff.weekly_hours > 0) ? Number(staff.weekly_hours) : 45,
     };
   },
 

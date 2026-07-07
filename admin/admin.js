@@ -756,7 +756,7 @@ function renderWeekHoursChart() {
     const idx = (new Date(sh.out_ts).getDay() + 6) % 7;
     byDay[idx] += sh.hrs;
   });
-  const max = Math.max(8, ...byDay);
+  const max = Math.max(9, ...byDay);
   const todayIdx = (new Date().getDay() + 6) % 7;
   const labels = ['M','T','W','T','F','S','S'];
   return `<div class="thbox">
@@ -2420,7 +2420,7 @@ function renderStaffModal() {
             <input id="sfRate" type="number" step="0.01" min="0" value="${escapeHtml(f.hourly_rate)}" placeholder="e.g. 75.00">
           </label>
           <label class="field"><span>Weekly hours</span>
-            <input id="sfHours" type="number" step="0.5" min="0" max="80" value="${escapeHtml(f.weekly_hours)}" placeholder="e.g. 40">
+            <input id="sfHours" type="number" step="0.5" min="0" max="80" value="${escapeHtml(f.weekly_hours)}" placeholder="e.g. 45">
           </label>
         </div>
         <div class="field-row">

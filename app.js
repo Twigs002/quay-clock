@@ -218,7 +218,7 @@ async function loadHome() {
     lastNote: data.lastNote,
     todayHrs: data.todayHrs || 0,
     weekHrs: data.weekHrs || 0,
-    weekTarget: data.weekTarget || 40,
+    weekTarget: data.weekTarget || 45,
   };
   // Tier 1 #2 — auto-prompt "did you forget to clock out yesterday?".
   // Fires when the user is still 'in' AND the last clock-in was more
@@ -286,7 +286,8 @@ function buildMonthSummary(events, now) {
     const inDate = new Date(openIn.ts);
     total += Math.max(0, (Date.now() - inDate.getTime()) / 3.6e6);
   }
-  // Target = weekdays in month × 8h (matches the 40h/week framing).
+  // Target = weekdays in month × 9h (matches the 45h/week framing —
+  // 9h/day incl. PAID teas + lunch, breaks are never deducted).
   const y = now.getFullYear();
   const m = now.getMonth();
   const lastDay = new Date(y, m + 1, 0).getDate();
@@ -295,7 +296,7 @@ function buildMonthSummary(events, now) {
     const dow = new Date(y, m, d).getDay();
     if (dow >= 1 && dow <= 5) weekdays++;
   }
-  const target = weekdays * 8;
+  const target = weekdays * 9;
   const overtime = total - target;
   const toGoTxt = overtime > 0 ? `+${fmtHM(overtime)} overtime` : `${fmtHM(target - total)} to go`;
   return {
@@ -376,7 +377,7 @@ function buildTimesheet(events, now) {
   }
   entries.sort((a, b) => b.sortAt - a.sortAt); // newest first; handles month boundaries
   const total = byDay.reduce((s,v) => s+v, 0);
-  const max = Math.max(8, ...byDay);
+  const max = Math.max(9, ...byDay);
   const todayIdx = (now.getDay() + 6) % 7;
   const weekBars = ['M','T','W','T','F','S','S'].map((l, i) => ({
     l, v: Math.max(0, byDay[i] / max), today: i === todayIdx,
@@ -384,7 +385,7 @@ function buildTimesheet(events, now) {
   return {
     weekBars, entries,
     totalHrs: total,
-    target: 40,
+    target: 45,
     weekStart: sow,
   };
 }
@@ -587,7 +588,7 @@ function renderHome() {
   const elapsed = on ? fmtElapsed(h.lastIn) : '0:00:00';
   const todayDisplay = on ? elapsed.slice(0, elapsed.lastIndexOf(':')) : fmtHM(h.todayHrs);
   const weekDisplay = fmtHM(h.weekHrs);
-  const weekPct = Math.min(1, (h.weekHrs || 0) / (h.weekTarget || 40));
+  const weekPct = Math.min(1, (h.weekHrs || 0) / (h.weekTarget || 45));
   // Tier 1 #3 — flag when the user has been clocked in >12h (likely
   // forgot to clock out yesterday). The auto-prompt handles the
   // explicit fix; the red ring is a passive visual reminder if they
@@ -637,7 +638,7 @@ function renderHome() {
         </div>
         <div class="stat">
           <div class="stat-lbl">This week</div>
-          <div class="stat-val"><span class="v">${weekDisplay}</span><span class="u">of ${h.weekTarget || 40}h</span></div>
+          <div class="stat-val"><span class="v">${weekDisplay}</span><span class="u">of ${h.weekTarget || 45}h</span></div>
           <div class="stat-bar"><div style="width:${(weekPct * 100).toFixed(0)}%"></div></div>
         </div>
       </div>

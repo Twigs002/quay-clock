@@ -113,7 +113,9 @@ function meAction_(body) {
     lastLoc: st.lastLoc,
     todayHrs: todayHrs,
     weekHrs: weekHrs,
-    weekTarget: 40,
+    // 45h house default (9h/day incl. PAID teas + lunch), or the
+    // staffer's own contracted weekly_hours if set.
+    weekTarget: (agent.weekly_hours != null && Number(agent.weekly_hours) > 0) ? Number(agent.weekly_hours) : 45,
   };
 }
 
