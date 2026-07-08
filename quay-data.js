@@ -936,18 +936,22 @@ const handlers = {
     const me = _selfStaff || await loadSelfStaff();
     if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
     const { data, error } = await sb.from('clock_notifications')
-      .select('id, message, active, created_by, created_at, updated_at')
+      .select('id, message, active, trigger, created_by, created_at, updated_at')
       .order('created_at', { ascending: false });
     if (error) return { ok: false, error: error.message };
     return { ok: true, notifications: data || [] };
   },
 
   // Active notices for the caller-facing popup. Any signed-in user may read.
-  async notification_active() {
-    const { data, error } = await sb.from('clock_notifications')
-      .select('id, message, updated_at')
-      .eq('active', true)
-      .order('updated_at', { ascending: false });
+  // Optional payload.trigger ('clock_in' | 'clock_out') filters to the notices
+  // meant for that moment; omitting it returns all active notices.
+  async notification_active(payload = {}) {
+    let query = sb.from('clock_notifications')
+      .select('id, message, trigger, updated_at')
+      .eq('active', true);
+    const trig = payload.trigger;
+    if (trig === 'clock_in' || trig === 'clock_out') query = query.eq('trigger', trig);
+    const { data, error } = await query.order('updated_at', { ascending: false });
     if (error) return { ok: false, error: error.message };
     return { ok: true, notifications: data || [] };
   },
@@ -958,7 +962,8 @@ const handlers = {
     if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
     const message = String(payload.message || '').trim();
     if (!message) return { ok: false, error: 'Message required' };
-    const row = { message, active: payload.active !== false, updated_at: new Date().toISOString() };
+    const trigger = payload.trigger === 'clock_out' ? 'clock_out' : 'clock_in';
+    const row = { message, active: payload.active !== false, trigger, updated_at: new Date().toISOString() };
     let res;
     if (payload.id) {
       res = await sb.from('clock_notifications').update(row).eq('id', payload.id).select('*').single();

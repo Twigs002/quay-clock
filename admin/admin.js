@@ -597,10 +597,12 @@ function renderView() {
 // the Clock In/Out app in the morning. Data via notification_* handlers.
 function renderNotice() {
   const notices = state.data.notices || [];
-  const edit = state.noticeEdit || { id: null, message: '', active: true };
+  const edit = state.noticeEdit || { id: null, message: '', active: true, trigger: 'clock_in' };
+  const whenLabel = (t) => t === 'clock_out' ? 'On clock-out' : 'On clock-in';
   const rows = notices.length ? notices.map(n => `
     <tr>
-      <td style="max-width:440px">${escapeHtml(n.message)}</td>
+      <td style="max-width:400px">${escapeHtml(n.message)}</td>
+      <td>${whenLabel(n.trigger)}</td>
       <td>${n.active ? '<span class="pill ok">Active</span>' : '<span class="pill">Off</span>'}</td>
       <td class="muted" style="font-size:12px">${escapeHtml(n.created_by || '—')}</td>
       <td style="white-space:nowrap;text-align:right">
@@ -609,15 +611,25 @@ function renderNotice() {
         <button class="btn" data-notice-del="${n.id}" style="color:#C0392B">Delete</button>
       </td>
     </tr>`).join('')
-    : `<tr><td colspan="4" class="muted" style="text-align:center;padding:24px">No notifications yet — add one above.</td></tr>`;
+    : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">No notifications yet — add one above.</td></tr>`;
+  const trig = edit.trigger || 'clock_in';
   return `
     <div class="card" style="padding:18px 20px;margin-bottom:16px">
       <h3 style="margin:0 0 4px">${edit.id ? 'Edit notification' : 'New notification'}</h3>
-      <p class="muted" style="margin:0 0 12px;font-size:13px">Pops up when a caller opens the Clock In/Out app in the morning. Example: “Kind reminder to be at Obs tomorrow.”</p>
+      <p class="muted" style="margin:0 0 12px;font-size:13px">Pops up to a caller when they clock in (morning reminder) or clock out (end-of-day reminder). Example: “Kind reminder to be at Obs tomorrow.”</p>
       <textarea id="noticeMsg" rows="3" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line,#d8dee4);border-radius:8px;font:inherit" placeholder="Type the reminder callers should see…">${escapeHtml(edit.message)}</textarea>
-      <label style="display:flex;align-items:center;gap:8px;margin:12px 0;font-size:14px">
-        <input type="checkbox" id="noticeActive" ${edit.active ? 'checked' : ''}> Active (show to callers)
-      </label>
+      <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin:12px 0">
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px">
+          Show
+          <select id="noticeTrigger" style="padding:7px 10px;border:1px solid var(--line,#d8dee4);border-radius:8px;font:inherit">
+            <option value="clock_in" ${trig === 'clock_in' ? 'selected' : ''}>on clock-in</option>
+            <option value="clock_out" ${trig === 'clock_out' ? 'selected' : ''}>on clock-out</option>
+          </select>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px">
+          <input type="checkbox" id="noticeActive" ${edit.active ? 'checked' : ''}> Active (show to callers)
+        </label>
+      </div>
       <div style="display:flex;gap:10px">
         <button class="btn primary" id="noticeSave">${edit.id ? 'Save changes' : 'Add notification'}</button>
         ${edit.id ? '<button class="btn" id="noticeCancel">Cancel</button>' : ''}
@@ -625,7 +637,7 @@ function renderNotice() {
     </div>
     <div class="card" style="padding:0;overflow:hidden">
       <table class="tbl" style="width:100%">
-        <thead><tr><th>Message</th><th>Status</th><th>By</th><th style="text-align:right">Actions</th></tr></thead>
+        <thead><tr><th>Message</th><th>When</th><th>Status</th><th>By</th><th style="text-align:right">Actions</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -642,10 +654,11 @@ function wireNotice() {
     if (save.disabled) return;
     const msg = (document.getElementById('noticeMsg') || {}).value || '';
     const active = !!((document.getElementById('noticeActive') || {}).checked);
+    const trigger = (document.getElementById('noticeTrigger') || {}).value || 'clock_in';
     if (!msg.trim()) { showToast('Type a message first'); return; }
     save.disabled = true;
     const res = await api('notification_save', {
-      id: (state.noticeEdit && state.noticeEdit.id) || null, message: msg, active,
+      id: (state.noticeEdit && state.noticeEdit.id) || null, message: msg, active, trigger,
     });
     if (!res || res.ok === false) { showToast((res && res.error) || 'Save failed'); save.disabled = false; return; }
     state.noticeEdit = null;
@@ -656,7 +669,7 @@ function wireNotice() {
   if (cancel) cancel.addEventListener('click', () => { state.noticeEdit = null; render(); });
   document.querySelectorAll('[data-notice-edit]').forEach(b => b.addEventListener('click', () => {
     const n = (state.data.notices || []).find(x => x.id === b.dataset.noticeEdit);
-    if (n) { state.noticeEdit = { id: n.id, message: n.message, active: n.active }; render(); }
+    if (n) { state.noticeEdit = { id: n.id, message: n.message, active: n.active, trigger: n.trigger || 'clock_in' }; render(); }
   }));
   document.querySelectorAll('[data-notice-del]').forEach(b => b.addEventListener('click', async () => {
     if (!window.confirm('Delete this notification?')) return;
@@ -668,7 +681,7 @@ function wireNotice() {
   document.querySelectorAll('[data-notice-toggle]').forEach(b => b.addEventListener('click', async () => {
     const n = (state.data.notices || []).find(x => x.id === b.dataset.noticeToggle);
     if (!n) return;
-    const res = await api('notification_save', { id: n.id, message: n.message, active: !n.active });
+    const res = await api('notification_save', { id: n.id, message: n.message, active: !n.active, trigger: n.trigger || 'clock_in' });
     if (!res || res.ok === false) { showToast((res && res.error) || 'Update failed'); return; }
     await reloadNotices(); render();
   }));

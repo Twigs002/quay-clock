@@ -244,25 +244,30 @@ async function loadHome() {
       };
     }
   }
-  // Admin-set clock-in reminder — one popup per SAST day, shown when a caller
-  // opens the app in the morning. Marked seen at show-time so it doesn't
-  // reappear on later opens the same day. Never overrides the forgot sheet.
-  if (!state.sheet && !state._noticeShown) {
-    const seenKey = 'quayClockNotice_' + sastYmd(new Date());
-    let seen = false;
-    try { seen = !!localStorage.getItem(seenKey); } catch {}
-    if (!seen) {
-      try {
-        const nres = await api('notification_active', {});
-        const msgs = ((nres && nres.notifications) || []).map(n => n.message).filter(Boolean);
-        if (msgs.length) {
-          state._noticeShown = true;
-          try { localStorage.setItem(seenKey, '1'); } catch {}
-          state.sheet = { type: 'notice', messages: msgs, seenKey };
-        }
-      } catch {}
+  // Admin-set clock-in reminder — surfaces when a caller opens the app (their
+  // morning arrival). Clock-out reminders fire separately from the clock-out
+  // flow. See maybeShowNotice(); it never overrides the forgot sheet.
+  await maybeShowNotice('clock_in');
+}
+
+// Admin-set reminder popup. `trigger` is 'clock_in' or 'clock_out'. Shows at
+// most once per SAST day per trigger, never overrides an already-open sheet
+// (e.g. the forgot-clock-out prompt), and is marked seen at show-time.
+async function maybeShowNotice(trigger) {
+  if (state.sheet) return;
+  state._noticeSeen = state._noticeSeen || {};
+  if (state._noticeSeen[trigger]) return;
+  const seenKey = 'quayClockNotice_' + trigger + '_' + sastYmd(new Date());
+  try { if (localStorage.getItem(seenKey)) return; } catch {}
+  try {
+    const nres = await api('notification_active', { trigger });
+    const msgs = ((nres && nres.notifications) || []).map(n => n.message).filter(Boolean);
+    if (msgs.length) {
+      state._noticeSeen[trigger] = true;
+      try { localStorage.setItem(seenKey, '1'); } catch {}
+      state.sheet = { type: 'notice', messages: msgs, seenKey };
     }
-  }
+  } catch {}
 }
 async function loadTimesheet() {
   const now = new Date();
@@ -818,6 +823,7 @@ async function clockOutDirect() {
     state.sheet = null;
     showToast('Clocked out ✓');
     await loadHome();
+    await maybeShowNotice('clock_out');
     render();
   } catch (e) {
     state.home._busyOut = false;
@@ -878,6 +884,7 @@ async function submitClock(action) {
     state.sheet = null;
     showToast(action === 'in' ? 'Clocked in ✓' : 'Clocked out ✓');
     await loadHome();
+    if (action === 'out') await maybeShowNotice('clock_out');
     render();
   } catch (e) {
     const msg = String(e.message || e);
