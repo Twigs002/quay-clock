@@ -1545,6 +1545,11 @@ function wireSheet() {
 
 async function submitRequest() {
   const s = state.sheet || {};
+  // Double-tap guard. Without this a second tap before leave_create resolves
+  // fires the insert twice → two identical Pending rows (users saw "double"
+  // pending requests). Mirrors the busy guard on submitClock /
+  // submitForgotClockOut. Set AFTER validation so a failed validation can retry.
+  if (s.busy) return;
   const which = s.which || 'in';
   const date = s.start || document.getElementById('reqFrom').value;
   const stEl = document.getElementById('reqStartTime');
@@ -1555,6 +1560,7 @@ async function submitRequest() {
   const reason = s.reason || document.getElementById('reqReason').value;
   if (!date) { showToast('Pick the date of the shift'); return; }
   if (!proposed) { showToast(`Pick the corrected clock-${which} time`); return; }
+  s.busy = true;
   try {
     await api('leave_create', {
       agent_id: state.agent.id,
@@ -1572,6 +1578,7 @@ async function submitRequest() {
     await loadLeave();
     render();
   } catch (e) {
+    s.busy = false;   // allow a retry after a genuine failure
     state.error = e.message; render();
   }
 }
