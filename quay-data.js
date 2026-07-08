@@ -369,6 +369,7 @@ const handlers = {
         division: s.division || '',
         hourly_rate:  s.hourly_rate  != null ? Number(s.hourly_rate)  : null,
         weekly_hours: s.weekly_hours != null ? Number(s.weekly_hours) : null,
+        salary:       s.salary       != null ? Number(s.salary)       : null,
         active: s.active !== false,
         status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
         lastNote: st.lastNote,
@@ -587,6 +588,7 @@ const handlers = {
         admin: !!payload.admin, active: payload.active !== false,
         hourly_rate:  payload.hourly_rate ?? null,
         weekly_hours: payload.weekly_hours ?? null,
+        salary:       payload.salary ?? null,
         is_super: !!payload.super,
         designation: payload.designation ?? null,
         division:    payload.division    ?? null,
@@ -698,6 +700,8 @@ const handlers = {
     if (payload.active != null)       patch.active = String(payload.active).toLowerCase() !== 'false';
     if (payload.weekly_hours !== undefined)
       patch.weekly_hours = (payload.weekly_hours === '' || payload.weekly_hours == null) ? null : Number(payload.weekly_hours);
+    if (payload.salary !== undefined)
+      patch.salary = (payload.salary === '' || payload.salary == null) ? null : Number(payload.salary);
     if (payload.designation !== undefined) patch.designation = payload.designation || null;
     if (payload.division !== undefined)    patch.division    = payload.division || null;
     if (Object.keys(patch).length) {

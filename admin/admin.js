@@ -2377,6 +2377,42 @@ function renderTeam() {
   // The Team view filters the FULL roster for display; the underlying data
   // (including archived) stays available to timesheets/payroll surfaces.
   const roster = state.showArchived ? fullRoster : fullRoster.filter(s => s.active !== false);
+  const money = (n) => 'R' + Number(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const rows = roster.map((s, i) => {
+    const isArchived = s.active === false;
+    const salary = s.salary != null ? money(s.salary) : '<span class="muted">—</span>';
+    const rate = s.hourly_rate != null ? `${money(s.hourly_rate)}/hr` : '<span class="muted">No rate</span>';
+    const live = liveById.get(s.id);
+    const currentTeam = (!isArchived && live && live.status === 'in') ? (live.note || '').trim() : '';
+    const onClock = isArchived
+      ? `<span class="pill" style="background:#E0E4EC;color:#5A6473;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700">Cannot log in</span>`
+      : `${tagFor(s.status)}${currentTeam ? ` <span class="team-on" title="Currently working on">${icon('clipboard', 12, 'var(--blue)')}<span>${escapeHtml(currentTeam)}</span></span>` : ''}`;
+    const archAction = isArchived
+      ? `<button class="btn small" data-unarchive-staff="${escapeHtml(s.id)}" title="Re-enable login for this staff member">Unarchive</button>`
+      : `<button class="btn small" data-archive-staff="${escapeHtml(s.id)}" data-staff-name="${escapeHtml(s.name)}" title="Disable login but keep historical clocks">Archive</button>`;
+    const badge = s.super
+      ? ' <span style="font-size:10px;background:var(--blue);color:#fff;padding:2px 6px;border-radius:6px;vertical-align:middle">SUPER</span>'
+      : (s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : '');
+    const archBadge = isArchived ? ' <span style="font-size:10px;background:#E0E4EC;color:#5A6473;padding:2px 6px;border-radius:6px;vertical-align:middle">ARCHIVED</span>' : '';
+    return `<tr data-search="${escapeHtml(((s.name||'') + ' ' + (s.id||'')).toLowerCase())}"${isArchived ? ' style="opacity:.62"' : ''}>
+      <td>
+        <div style="display:flex;align-items:center;gap:11px;min-width:0">
+          <div class="av" style="background:${avColor(i)};width:38px;height:38px;font-size:14px;flex:none${isArchived ? ';filter:grayscale(100%)' : ''}">${initials(s.name)}</div>
+          <div style="min-width:0">
+            <div class="name" style="font-size:14px">${escapeHtml(s.name)}${badge}${archBadge}</div>
+            <div class="muted" style="font-size:12px">@${escapeHtml(s.id || '—')}</div>
+          </div>
+        </div>
+      </td>
+      <td style="white-space:nowrap">${salary}</td>
+      <td style="white-space:nowrap">${rate}</td>
+      <td>${onClock}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn small" data-edit-staff="${escapeHtml(s.id)}">Edit</button>
+        ${isSuper ? archAction : ''}
+      </td>
+    </tr>`;
+  }).join('');
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap">
       <label class="show-arch" style="display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--slate);cursor:pointer">
@@ -2387,38 +2423,13 @@ function renderTeam() {
         ? `<button class="btn primary small" id="addStaffBtn">+ Add staff</button>`
         : `<span class="muted" style="font-size:12.5px">Only superusers can add staff.</span>`}
     </div>
-    <div class="team-grid">
-      ${roster.length === 0 ? `<div class="empty card" style="grid-column:1/-1">No staff yet${isSuper ? ' — click <b>+ Add staff</b> to add your first.' : ' — ask a superuser to add them.'}</div>` : ''}
-      ${roster.map((s, i) => {
-        const rate = s.hourly_rate != null ? `R${Number(s.hourly_rate).toFixed(2)}/hr` : 'No rate set';
-        const hrs = s.weekly_hours != null ? `${Number(s.weekly_hours)}h/week` : 'No target';
-        const live = liveById.get(s.id);
-        const currentTeam = (live && live.status === 'in') ? (live.note || '').trim() : '';
-        const isArchived = s.active === false;
-        const archAction = isArchived
-          ? `<button class="btn small" data-unarchive-staff="${escapeHtml(s.id)}" title="Re-enable login for this staff member">Unarchive</button>`
-          : `<button class="btn small" data-archive-staff="${escapeHtml(s.id)}" data-staff-name="${escapeHtml(s.name)}" title="Disable login but keep historical clocks">Archive</button>`;
-        return `<div class="card team-card${isArchived ? ' team-card-archived' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.id||'')).toLowerCase())}">
-          <div class="top">
-            <div class="av" style="background:${avColor(i)};width:46px;height:46px;font-size:17px${isArchived ? ';filter:grayscale(100%);opacity:.65' : ''}">${initials(s.name)}</div>
-            <div style="min-width:0;flex:1">
-              <div class="name">${escapeHtml(s.name)}${s.super
-                ? ' <span style="font-size:10px;background:var(--blue);color:#fff;padding:2px 6px;border-radius:6px;vertical-align:middle">SUPER</span>'
-                : (s.admin ? ' <span style="font-size:10px;background:var(--yellow);color:var(--ink);padding:2px 6px;border-radius:6px;vertical-align:middle">ADMIN</span>' : '')}${isArchived ? ' <span style="font-size:10px;background:#E0E4EC;color:#5A6473;padding:2px 6px;border-radius:6px;vertical-align:middle">ARCHIVED</span>' : ''}</div>
-            </div>
-            <button class="btn small" data-edit-staff="${escapeHtml(s.id)}">Edit</button>
-          </div>
-          <div style="margin-top:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            ${isArchived ? `<span class="pill" style="background:#E0E4EC;color:#5A6473;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700">Cannot log in</span>` : tagFor(s.status)}
-            ${!isArchived && currentTeam ? `<span class="team-on" title="Currently working on">${icon('clipboard', 12, 'var(--blue)')}<span>${escapeHtml(currentTeam)}</span></span>` : ''}
-          </div>
-          <div class="meta">
-            <div class="li">${icon('users', 14, 'var(--muted)')}@${escapeHtml(s.id || '—')}</div>
-            <div class="li">${icon('clock', 14, 'var(--muted)')}${escapeHtml(rate)} · ${escapeHtml(hrs)}</div>
-          </div>
-          ${isSuper ? `<div style="margin-top:12px;display:flex;justify-content:flex-end">${archAction}</div>` : ''}
-        </div>`;
-      }).join('')}
+    <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
+      <table class="tbl team-list" style="width:100%">
+        <thead><tr>
+          <th>Name</th><th>Salary</th><th>Hourly rate</th><th>On clock</th><th style="text-align:right">Actions</th>
+        </tr></thead>
+        <tbody>${roster.length ? rows : `<tr><td colspan="5" class="muted" style="text-align:center;padding:28px">No staff yet${isSuper ? ' — click <b>+ Add staff</b> to add your first.' : ' — ask a superuser to add them.'}</td></tr>`}</tbody>
+      </table>
     </div>
     ${state.staffModal ? renderStaffModal() : ''}
   `;
@@ -2428,7 +2439,7 @@ function wireTeam() {
   const btn = document.getElementById('addStaffBtn');
   if (btn) btn.addEventListener('click', () => {
     state.staffModal = { mode: 'add', name: '', id: '', role: '', team: '', pin: '',
-                        admin: false, super: false, hourly_rate: '', weekly_hours: '',
+                        admin: false, super: false, hourly_rate: '', weekly_hours: '', salary: '',
                         designation: 'fancy', division: '',
                         error: '', busy: false };
     render();
@@ -2443,6 +2454,7 @@ function wireTeam() {
       pin: '', admin: !!s.admin, super: !!s.super,
       hourly_rate: s.hourly_rate != null ? String(s.hourly_rate) : '',
       weekly_hours: s.weekly_hours != null ? String(s.weekly_hours) : '',
+      salary: s.salary != null ? String(s.salary) : '',
       designation: s.designation || '',
       division: s.division || '',
       active: s.active !== false, error: '', busy: false,
@@ -2518,6 +2530,10 @@ function renderStaffModal() {
             <input id="sfTeam" type="text" value="${escapeHtml(f.team)}" placeholder="Sales">
           </label>
         </div>
+        <label class="field"><span>Monthly salary (R)</span>
+          <input id="sfSalary" type="number" step="0.01" min="0" value="${escapeHtml(f.salary)}" placeholder="e.g. 12000.00">
+          <div class="hint">Admin-only. Shown on the Team list.</div>
+        </label>
         <div class="field-row">
           <label class="field"><span>Hourly rate (R)</span>
             <input id="sfRate" type="number" step="0.01" min="0" value="${escapeHtml(f.hourly_rate)}" placeholder="e.g. 75.00">
@@ -2596,6 +2612,7 @@ function wireStaffModal() {
   const team  = document.getElementById('sfTeam');
   const rate  = document.getElementById('sfRate');
   const hours = document.getElementById('sfHours');
+  const salary = document.getElementById('sfSalary');
   const pin   = document.getElementById('sfPin');
   const adm   = document.getElementById('sfAdmin');
   const sup   = document.getElementById('sfSuper');
@@ -2614,6 +2631,7 @@ function wireStaffModal() {
   team.addEventListener('input',  () => { f.team  = team.value; });
   rate.addEventListener('input',  () => { f.hourly_rate  = rate.value; });
   hours.addEventListener('input', () => { f.weekly_hours = hours.value; });
+  if (salary) salary.addEventListener('input', () => { f.salary = salary.value; });
   const desig = document.getElementById('sfDesignation');
   if (desig) desig.addEventListener('change', () => {
     f.designation = desig.value;
@@ -2657,6 +2675,7 @@ async function submitStaffModal() {
         super: !!f.super,
         hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
         weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
+        salary:       f.salary       === '' ? null : Number(f.salary),
         designation: f.designation || null,
         division: f.division || null,
       });
@@ -2676,6 +2695,7 @@ async function submitStaffModal() {
         super: !!f.super,
         hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
         weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
+        salary:       f.salary       === '' ? null : Number(f.salary),
         designation: f.designation || null,
         division: f.division || null,
       });
