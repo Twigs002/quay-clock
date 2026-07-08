@@ -244,6 +244,25 @@ async function loadHome() {
       };
     }
   }
+  // Admin-set clock-in reminder — one popup per SAST day, shown when a caller
+  // opens the app in the morning. Marked seen at show-time so it doesn't
+  // reappear on later opens the same day. Never overrides the forgot sheet.
+  if (!state.sheet && !state._noticeShown) {
+    const seenKey = 'quayClockNotice_' + sastYmd(new Date());
+    let seen = false;
+    try { seen = !!localStorage.getItem(seenKey); } catch {}
+    if (!seen) {
+      try {
+        const nres = await api('notification_active', {});
+        const msgs = ((nres && nres.notifications) || []).map(n => n.message).filter(Boolean);
+        if (msgs.length) {
+          state._noticeShown = true;
+          try { localStorage.setItem(seenKey, '1'); } catch {}
+          state.sheet = { type: 'notice', messages: msgs, seenKey };
+        }
+      } catch {}
+    }
+  }
 }
 async function loadTimesheet() {
   const now = new Date();
@@ -1253,7 +1272,30 @@ function renderSheet() {
   if (state.sheet.type === 'report')  return renderReportSheet();
   if (state.sheet.type === 'forgot')  return renderForgotSheet();
   if (state.sheet.type === 'confirm-out') return renderClockoutConfirmSheet();
+  if (state.sheet.type === 'notice')  return renderNoticeSheet();
   return '';
+}
+
+// ───── NOTICE SHEET (admin clock-in reminder) ───────────────────────
+// A dismissible morning popup composed by admins on the Clocks dashboard.
+function renderNoticeSheet() {
+  const msgs = Array.isArray(state.sheet.messages) ? state.sheet.messages : [];
+  const body = msgs.map(m =>
+    `<p style="margin:0 0 10px;color:var(--ink);font-size:15px;line-height:1.5">${escapeHtml(m)}</p>`).join('');
+  return `<div class="sheet-wrap" id="sheetWrap">
+    <div class="sheet-back" id="sheetBack"></div>
+    <div class="sheet" role="dialog" aria-modal="true">
+      <div class="sheet-grip"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        ${icon('bell', 22, 'var(--yellow)')}
+        <h2 style="font-size:18px;margin:0">A quick reminder</h2>
+      </div>
+      ${body || '<p class="muted">No message.</p>'}
+      <div style="margin-top:16px">
+        <button class="btn-cta ok" id="noticeOk" type="button">Got it</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 function renderNoteSheet() {
@@ -1368,6 +1410,11 @@ function renderLeaveSheet() {
 function wireSheet() {
   const back = document.getElementById('sheetBack');
   if (back) back.addEventListener('click', () => { state.sheet = null; render(); });
+  if (state.sheet.type === 'notice') {
+    const ok = document.getElementById('noticeOk');
+    if (ok) ok.addEventListener('click', () => { state.sheet = null; render(); });
+    return;
+  }
   if (state.sheet.type === 'confirm-out') {
     const go = document.getElementById('confirmOutGo');
     const stay = document.getElementById('confirmOutStay');

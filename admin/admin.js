@@ -320,6 +320,9 @@ async function loadAll() {
     // Today's absences power the Dashboard's Absent stat + per-row
     // 'Absent · Sick' pill in the 'Who's working now' table.
     state.data.absencesToday = await loadAbsencesToday();
+    // Clock-in notifications (admin CRUD source + caller popup).
+    try { state.data.notices = ((await api('notification_list')) || {}).notifications || []; }
+    catch { state.data.notices = []; }
     // SA public holidays (unpaid, same rule as absence). Loaded once per
     // session so the Variant A timesheet + payroll flags them without
     // re-fetching. Map<observed_date_ymd, {name, observed, date}>.
@@ -451,6 +454,7 @@ function renderSidebar() {
     ['timesheets','clipboard','Timesheets'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
+    ['notice','bell','Notice'],
   ];
   return `<div class="sidebar">
     <div class="logo"><img src="../assets/quay1-logo-white.png" alt="Quay 1"></div>
@@ -481,6 +485,7 @@ function renderTopNav() {
     ['timesheets','clipboard','Timesheets'],
     ['leave','calendar','Requests'],
     ['team','users','Team'],
+    ['notice','bell','Notice'],
   ];
   return `<div class="topnav">
     ${items.map(([k, ic, label]) => `
@@ -504,6 +509,7 @@ const TITLES = {
   timesheets: ['Timesheets', 'Review & approve hours'],
   leave:      ['Requests',   'Shift-time corrections'],
   team:       ['Team',       'Staff directory & status'],
+  notice:     ['Notice',     'Clock-in reminder shown to callers'],
 };
 function renderTopbar() {
   const [t, sub] = TITLES[state.view] || ['', ''];
@@ -559,6 +565,7 @@ function wireShell() {
   if (state.view === 'leave')      wireLeave();
   if (state.view === 'timesheets') wireTimesheets();
   if (state.view === 'team')       wireTeam();
+  if (state.view === 'notice')     wireNotice();
   applySearchFilter();
 }
 
@@ -580,8 +587,91 @@ function renderView() {
     case 'timesheets': return renderTimesheets();
     case 'leave':      return renderLeave();
     case 'team':       return renderTeam();
+    case 'notice':     return renderNotice();
     default:           return '';
   }
+}
+
+// ───── NOTICE (clock-in reminder) ────────────────────────────────────
+// Admins compose a short message that pops up to callers when they open
+// the Clock In/Out app in the morning. Data via notification_* handlers.
+function renderNotice() {
+  const notices = state.data.notices || [];
+  const edit = state.noticeEdit || { id: null, message: '', active: true };
+  const rows = notices.length ? notices.map(n => `
+    <tr>
+      <td style="max-width:440px">${escapeHtml(n.message)}</td>
+      <td>${n.active ? '<span class="pill ok">Active</span>' : '<span class="pill">Off</span>'}</td>
+      <td class="muted" style="font-size:12px">${escapeHtml(n.created_by || '—')}</td>
+      <td style="white-space:nowrap;text-align:right">
+        <button class="btn" data-notice-toggle="${n.id}">${n.active ? 'Turn off' : 'Turn on'}</button>
+        <button class="btn" data-notice-edit="${n.id}">Edit</button>
+        <button class="btn" data-notice-del="${n.id}" style="color:#C0392B">Delete</button>
+      </td>
+    </tr>`).join('')
+    : `<tr><td colspan="4" class="muted" style="text-align:center;padding:24px">No notifications yet — add one above.</td></tr>`;
+  return `
+    <div class="card" style="padding:18px 20px;margin-bottom:16px">
+      <h3 style="margin:0 0 4px">${edit.id ? 'Edit notification' : 'New notification'}</h3>
+      <p class="muted" style="margin:0 0 12px;font-size:13px">Pops up when a caller opens the Clock In/Out app in the morning. Example: “Kind reminder to be at Obs tomorrow.”</p>
+      <textarea id="noticeMsg" rows="3" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line,#d8dee4);border-radius:8px;font:inherit" placeholder="Type the reminder callers should see…">${escapeHtml(edit.message)}</textarea>
+      <label style="display:flex;align-items:center;gap:8px;margin:12px 0;font-size:14px">
+        <input type="checkbox" id="noticeActive" ${edit.active ? 'checked' : ''}> Active (show to callers)
+      </label>
+      <div style="display:flex;gap:10px">
+        <button class="btn primary" id="noticeSave">${edit.id ? 'Save changes' : 'Add notification'}</button>
+        ${edit.id ? '<button class="btn" id="noticeCancel">Cancel</button>' : ''}
+      </div>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table class="tbl" style="width:100%">
+        <thead><tr><th>Message</th><th>Status</th><th>By</th><th style="text-align:right">Actions</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function reloadNotices() {
+  const res = await api('notification_list');
+  state.data.notices = (res && res.notifications) || [];
+}
+
+function wireNotice() {
+  const save = document.getElementById('noticeSave');
+  if (save) save.addEventListener('click', async () => {
+    if (save.disabled) return;
+    const msg = (document.getElementById('noticeMsg') || {}).value || '';
+    const active = !!((document.getElementById('noticeActive') || {}).checked);
+    if (!msg.trim()) { showToast('Type a message first'); return; }
+    save.disabled = true;
+    const res = await api('notification_save', {
+      id: (state.noticeEdit && state.noticeEdit.id) || null, message: msg, active,
+    });
+    if (!res || res.ok === false) { showToast((res && res.error) || 'Save failed'); save.disabled = false; return; }
+    state.noticeEdit = null;
+    showToast('Notification saved');
+    await reloadNotices(); render();
+  });
+  const cancel = document.getElementById('noticeCancel');
+  if (cancel) cancel.addEventListener('click', () => { state.noticeEdit = null; render(); });
+  document.querySelectorAll('[data-notice-edit]').forEach(b => b.addEventListener('click', () => {
+    const n = (state.data.notices || []).find(x => x.id === b.dataset.noticeEdit);
+    if (n) { state.noticeEdit = { id: n.id, message: n.message, active: n.active }; render(); }
+  }));
+  document.querySelectorAll('[data-notice-del]').forEach(b => b.addEventListener('click', async () => {
+    if (!window.confirm('Delete this notification?')) return;
+    const res = await api('notification_delete', { id: b.dataset.noticeDel });
+    if (!res || res.ok === false) { showToast((res && res.error) || 'Delete failed'); return; }
+    if (state.noticeEdit && state.noticeEdit.id === b.dataset.noticeDel) state.noticeEdit = null;
+    await reloadNotices(); render();
+  }));
+  document.querySelectorAll('[data-notice-toggle]').forEach(b => b.addEventListener('click', async () => {
+    const n = (state.data.notices || []).find(x => x.id === b.dataset.noticeToggle);
+    if (!n) return;
+    const res = await api('notification_save', { id: n.id, message: n.message, active: !n.active });
+    if (!res || res.ok === false) { showToast((res && res.error) || 'Update failed'); return; }
+    await reloadNotices(); render();
+  }));
 }
 
 // ───── DASHBOARD ─────────────────────────────────────────────────────

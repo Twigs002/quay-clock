@@ -928,6 +928,58 @@ const handlers = {
     return { ok: true };
   },
 
+  // ── Clock-in notifications ────────────────────────────────────────────
+  // Admin-managed reminders ("Kind reminder to be at Obs tomorrow.") that pop
+  // up to callers when they open the Clock In/Out app in the morning.
+  // RLS: any signed-in user reads active notices; only admins write.
+  async notification_list() {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
+    const { data, error } = await sb.from('clock_notifications')
+      .select('id, message, active, created_by, created_at, updated_at')
+      .order('created_at', { ascending: false });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, notifications: data || [] };
+  },
+
+  // Active notices for the caller-facing popup. Any signed-in user may read.
+  async notification_active() {
+    const { data, error } = await sb.from('clock_notifications')
+      .select('id, message, updated_at')
+      .eq('active', true)
+      .order('updated_at', { ascending: false });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, notifications: data || [] };
+  },
+
+  // Create (no id) or update (with id) a notice. Admin only.
+  async notification_save(payload = {}) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
+    const message = String(payload.message || '').trim();
+    if (!message) return { ok: false, error: 'Message required' };
+    const row = { message, active: payload.active !== false, updated_at: new Date().toISOString() };
+    let res;
+    if (payload.id) {
+      res = await sb.from('clock_notifications').update(row).eq('id', payload.id).select('*').single();
+    } else {
+      row.created_by = me.name || me.id;
+      res = await sb.from('clock_notifications').insert(row).select('*').single();
+    }
+    if (res.error) return { ok: false, error: res.error.message };
+    return { ok: true, notification: res.data };
+  },
+
+  // Delete a notice. Admin only.
+  async notification_delete(payload = {}) {
+    const me = _selfStaff || await loadSelfStaff();
+    if (!me || !me.is_admin) return { ok: false, error: 'Admin access required' };
+    if (!payload.id) return { ok: false, error: 'Missing id' };
+    const { error } = await sb.from('clock_notifications').delete().eq('id', payload.id);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  },
+
   // Clock-out report (LN / Assistant). Insert is gated by RLS — only the
   // signed-in staff member can insert their own row (or an admin).
   async clock_out_report_submit(payload) {
