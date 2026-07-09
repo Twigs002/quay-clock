@@ -939,10 +939,10 @@ function renderTimesheets() {
     <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
       <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase">From</label>
       <input id="tsCustomFrom" type="date" value="${state.tsCustomFrom || range.from.toISOString().slice(0,10)}"
-             style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-family:Montserrat;font-size:13px">
+             style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-family:Montserrat,sans-serif;font-size:13px">
       <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase">To</label>
       <input id="tsCustomTo" type="date" value="${state.tsCustomTo || range.to.toISOString().slice(0,10)}"
-             style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-family:Montserrat;font-size:13px">
+             style="padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-family:Montserrat,sans-serif;font-size:13px">
       <button class="btn small primary" id="tsCustomApply">Apply</button>
     </div>
   ` : '';
@@ -955,7 +955,7 @@ function renderTimesheets() {
       ${icon('search', 14, 'var(--muted)')}
       <input id="tsLocalSearch" type="text" placeholder="Filter staff…"
              value="${escapeHtml(state.search || '')}"
-             style="border:0;outline:0;font-family:Montserrat;font-size:13px;padding:2px 0;background:transparent;min-width:160px">
+             style="border:0;outline:0;font-family:Montserrat,sans-serif;font-size:13px;padding:2px 0;background:transparent;min-width:160px">
     </div>`;
 
   const header = `<div class="card-head" style="flex-wrap:wrap;gap:10px">
@@ -2160,28 +2160,28 @@ function renderAbsenceMarker() {
         <div style="display:flex;flex-direction:column;gap:12px;margin-top:6px">
           <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">
             Staff
-            <select id="abStaff" style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;text-transform:none;font-weight:500;color:var(--ink)">${staffOpts}</select>
+            <select id="abStaff" style="font-family:Montserrat,sans-serif;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;text-transform:none;font-weight:500;color:var(--ink)">${staffOpts}</select>
           </label>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;flex:1 1 140px">
               From
               <input id="abFrom" type="date" value="${escapeHtml(a.fromDate)}"
-                     style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
+                     style="font-family:Montserrat,sans-serif;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
             </label>
             <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;flex:1 1 140px">
               To
               <input id="abTo" type="date" value="${escapeHtml(a.toDate)}"
-                     style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
+                     style="font-family:Montserrat,sans-serif;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
             </label>
           </div>
           <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">
             Reason
-            <select id="abReason" style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;text-transform:none;font-weight:500;color:var(--ink)">${reasonOpts}</select>
+            <select id="abReason" style="font-family:Montserrat,sans-serif;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;text-transform:none;font-weight:500;color:var(--ink)">${reasonOpts}</select>
           </label>
           <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase">
             Note (optional)
             <input id="abNote" type="text" value="${escapeHtml(a.note || '')}" placeholder="e.g. doctor's appointment"
-                   style="font-family:Montserrat;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
+                   style="font-family:Montserrat,sans-serif;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-transform:none;font-weight:500">
           </label>
           ${dayCount > 0 ? `<div class="muted" style="font-size:12.5px">Will mark <b style="color:var(--ink)">${dayCount}</b> day${dayCount === 1 ? '' : 's'} absent.</div>` : ''}
           ${a.error ? `<div class="banner">${escapeHtml(a.error)}</div>` : ''}
