@@ -21,6 +21,7 @@ interface Body {
   active?: boolean;
   hourly_rate?: number | string | null;
   weekly_hours?: number | string | null;
+  salary?: number | string | null;
   is_super?: boolean;
   is_broker?: boolean;
   email?: string | null;
@@ -28,10 +29,11 @@ interface Body {
   division?: string | null;
 }
 
-// Roles a plain admin (manager) is allowed to create. Anything else — Fancy
-// Caller, Manager, Super Admin, Broker, Rental Support — is superuser-only.
+// Roles a plain admin (manager) is allowed to create. Anything else — Manager,
+// Super Admin, Broker, Rental Support — is superuser-only.
 const MANAGER_DESIGNATIONS = new Set([
   "rm",
+  "fancy",
   "ln",
   "assistant",
   "admin_assistant",
@@ -92,7 +94,7 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "Managers cannot grant admin, superuser or broker access." }, 403);
     }
     if (!designation || !MANAGER_DESIGNATIONS.has(designation)) {
-      return json({ ok: false, error: "Managers can only add RM, LN, Assistant or Admin Assistant." }, 403);
+      return json({ ok: false, error: "Managers can only add RM, Fancy, LN, Assistant or Admin Assistant." }, 403);
     }
   }
 
@@ -135,6 +137,7 @@ Deno.serve(async (req) => {
     active: body.active === false ? false : true,
     hourly_rate:  num(body.hourly_rate),
     weekly_hours: num(body.weekly_hours),
+    salary:       num(body.salary),
     designation:  designation,
     division:     body.division || null,
   });
