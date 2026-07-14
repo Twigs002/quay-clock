@@ -22,9 +22,20 @@ interface Body {
   hourly_rate?: number | string | null;
   weekly_hours?: number | string | null;
   is_super?: boolean;
+  is_broker?: boolean;
+  email?: string | null;
   designation?: string | null;
   division?: string | null;
 }
+
+// Roles a plain admin (manager) is allowed to create. Anything else — Fancy
+// Caller, Manager, Super Admin, Broker, Rental Support — is superuser-only.
+const MANAGER_DESIGNATIONS = new Set([
+  "rm",
+  "ln",
+  "assistant",
+  "admin_assistant",
+]);
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -41,7 +52,9 @@ Deno.serve(async (req) => {
   const callerJwt       = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
   if (!callerJwt) return json({ ok: false, error: "Missing auth header" }, 401);
 
-  // 1. Verify caller is a SUPERUSER (only supers can create staff).
+  // 1. Verify caller is at least an ADMIN (manager). Supers can create any
+  //    role; a plain admin is restricted to the caller/support roles below —
+  //    that finer check runs after the body is parsed (step 2a).
   const callerClient = createClient(supabaseUrl, serviceRoleKey, {
     global: { headers: { Authorization: `Bearer ${callerJwt}` } },
     auth: { persistSession: false },
@@ -51,9 +64,10 @@ Deno.serve(async (req) => {
     .select("id, is_admin, is_super")
     .eq("auth_user_id", (await callerClient.auth.getUser()).data.user?.id ?? "")
     .single();
-  if (callerErr || !callerStaff?.is_super) {
-    return json({ ok: false, error: "Superuser access required to add staff" }, 403);
+  if (callerErr || !(callerStaff?.is_super || callerStaff?.is_admin)) {
+    return json({ ok: false, error: "Admin access required to add staff" }, 403);
   }
+  const callerIsSuper = !!callerStaff?.is_super;
 
   // 2. Read + validate body.
   let body: Body;
@@ -65,7 +79,26 @@ Deno.serve(async (req) => {
   if (!name)          return json({ ok: false, error: "name is required" }, 400);
   if (pin.length < 6) return json({ ok: false, error: "PIN must be 6 digits" }, 400);
 
-  const email = `${id}@quay1.local`;
+  // Normalised elevation flags for the row we're about to create.
+  const wantAdmin  = !!body.admin;
+  const wantSuper  = !!body.is_super;
+  const wantBroker = !!body.is_broker;
+  const designation = (body.designation || "").trim().toLowerCase() || null;
+
+  // 2a. Managers (plain admins) may only create the caller/support roles and
+  //     may never grant admin/super/broker. Supers can create anything.
+  if (!callerIsSuper) {
+    if (wantAdmin || wantSuper || wantBroker) {
+      return json({ ok: false, error: "Managers cannot grant admin, superuser or broker access." }, 403);
+    }
+    if (!designation || !MANAGER_DESIGNATIONS.has(designation)) {
+      return json({ ok: false, error: "Managers can only add RM, LN, Assistant or Admin Assistant." }, 403);
+    }
+  }
+
+  // Synthetic login address (all staff sign in with <id>@quay1.local). Kept
+  // separate from body.email, which is the broker's REAL work email.
+  const loginEmail = `${id}@quay1.local`;
 
   // 3. Admin client for the write.
   const admin = createClient(supabaseUrl, serviceRoleKey, {
@@ -78,7 +111,7 @@ Deno.serve(async (req) => {
 
   // 4. Create the auth user.
   const { data: authData, error: authErr } = await admin.auth.admin.createUser({
-    email,
+    email: loginEmail,
     password: pin,
     email_confirm: true,
     user_metadata: { username: id, name },
@@ -95,12 +128,14 @@ Deno.serve(async (req) => {
     name,
     role: body.role ?? "",
     team: body.team ?? "",
-    is_admin: !!body.admin,
-    is_super: !!body.is_super,
+    is_admin: wantAdmin,
+    is_super: wantSuper,
+    is_broker: wantBroker,
+    email: (body.email || "").trim() || null,
     active: body.active === false ? false : true,
     hourly_rate:  num(body.hourly_rate),
     weekly_hours: num(body.weekly_hours),
-    designation:  body.designation || null,
+    designation:  designation,
     division:     body.division || null,
   });
   if (staffErr) {
