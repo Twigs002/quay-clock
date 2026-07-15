@@ -241,6 +241,12 @@ const handlers = {
       await sb.auth.signOut(); clearSelf();
       return { ok: false, error: 'Account is disabled' };
     }
+    // Brokers are login-only accounts for the HubSpot dashboard — they never
+    // clock in. Their auth credentials must not grant access to the clock PWA.
+    if (staff.is_broker === true) {
+      await sb.auth.signOut(); clearSelf();
+      return { ok: false, error: 'This account cannot clock in.' };
+    }
     return { ok: true, agent: publicAgent(staff) };
   },
 
@@ -353,7 +359,11 @@ const handlers = {
     // include_inactive=true returns archived (active=false) staff as well,
     // used by the admin Team page so admins can unarchive someone. Defaults
     // to false so PWA / dashboard surfaces never see disabled accounts.
-    let q = sb.from('staff').select('*').order('name', { ascending: true });
+    // Brokers are login-only accounts for the HubSpot marketing dashboard —
+    // no clock-in, no payroll. They must never appear in any clock surface
+    // (Team page, mark-absent, forgot-to-clock-out, team_today), so exclude
+    // them from the roster that feeds all of them.
+    let q = sb.from('staff').select('*').eq('is_broker', false).order('name', { ascending: true });
     if (!payload.include_inactive) q = q.eq('active', true);
     const { data, error } = await q;
     if (error) return { ok: false, error: error.message };
