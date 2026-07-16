@@ -295,6 +295,7 @@ async function loadTimesheet() {
   ]);
   state.timesheet = buildTimesheet(weekData.events, now);
   state.timesheet.monthSummary = buildMonthSummary(monthData.events, now);
+  state.timesheet.cycleWeeks = buildCycleWeeks(monthData.events, now);
 }
 
 function buildMonthSummary(events, now) {
@@ -343,6 +344,61 @@ function buildMonthSummary(events, now) {
     toGoTxt,
     monthLabel: `${f(cyc.from)} – ${f(cyc.to)}`,
   };
+}
+
+// Break the current pay cycle (21st → 20th) into its Mon-Sun weeks and sum
+// hours per week. Hours are attributed to the OUT day (matching the weekly
+// timesheet + payroll), and each week is clipped to the cycle boundaries so
+// the partial opening/closing weeks only count their in-cycle days and the
+// week totals reconcile with the cycle total.
+function buildCycleWeeks(events, now) {
+  const cyc = payCycleFor(now);
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const perDay = {}; // ymd -> hrs, keyed by the day a shift ENDED on
+  const addDay = (d, h) => { if (h > 0) perDay[ymd(d)] = (perDay[ymd(d)] || 0) + h; };
+  let openIn = null;
+  const sorted = (events || []).slice().sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  sorted.forEach(e => {
+    if (e.action === 'in') { openIn = e; return; }
+    if (e.action !== 'out') return;
+    const inDate = openIn ? new Date(openIn.ts) : null;
+    const outDate = new Date(e.ts);
+    const hrs = inDate
+      ? Math.max(0, (outDate - inDate) / 3.6e6)
+      : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
+    addDay(outDate, hrs);
+    openIn = null;
+  });
+  // In-progress shift counts on the day it started (today).
+  if (openIn) {
+    const inDate = new Date(openIn.ts);
+    addDay(inDate, Math.max(0, (Date.now() - inDate.getTime()) / 3.6e6));
+  }
+  const todaySow = startOfWeek(now).getTime();
+  const monShort = (d) => d.toLocaleDateString('en-GB', { month: 'short' });
+  const rangeLabel = (a, b) => a.getMonth() === b.getMonth()
+    ? `${a.getDate()}–${b.getDate()} ${monShort(b)}`
+    : `${a.getDate()} ${monShort(a)} – ${b.getDate()} ${monShort(b)}`;
+  const weeks = [];
+  let wStart = startOfWeek(cyc.from);
+  while (wStart <= cyc.to) {
+    const wEnd = endOfWeek(wStart);
+    const from = wStart < cyc.from ? new Date(cyc.from) : new Date(wStart);
+    const to   = wEnd   > cyc.to   ? new Date(cyc.to)   : new Date(wEnd);
+    // Sum the day buckets that fall within this week's clipped span.
+    let hrs = 0;
+    for (const k in perDay) {
+      const d = new Date(k + 'T12:00:00');
+      if (d >= from && d <= to) hrs += perDay[k];
+    }
+    weeks.push({
+      label: rangeLabel(from, to),
+      hrs,
+      isCurrent: wStart.getTime() === todaySow,
+    });
+    wStart = new Date(wStart); wStart.setDate(wStart.getDate() + 7);
+  }
+  return weeks;
 }
 async function loadLeave() {
   // "leave" name kept for state continuity; this tab is now Requests
@@ -1678,6 +1734,28 @@ function renderTimesheet() {
         </div>
       </div>` : '';
 
+  const cw = ts.cycleWeeks;
+  const weeksCard = (cw && cw.length) ? `
+      <div class="section-title">Weekly breakdown</div>
+      <div class="col">
+        ${cw.map(w => {
+          const pct = Math.min(100, (w.hrs / 45) * 100);
+          return `
+          <div class="card pad-sm" style="display:flex;align-items:center;gap:12px${w.isCurrent ? ';box-shadow:inset 3px 0 0 var(--blue)' : ''}">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-weight:700;font-size:14px">${escapeHtml(w.label)}</span>
+                ${w.isCurrent ? `<span class="pill pill-on"><span class="dot"></span>This week</span>` : ''}
+              </div>
+              <div style="height:6px;border-radius:4px;background:var(--skySoft);margin-top:8px;overflow:hidden">
+                <div style="height:100%;width:${pct.toFixed(0)}%;border-radius:4px;background:var(--blue)"></div>
+              </div>
+            </div>
+            <div class="tnum" style="font-weight:800;font-size:16px;white-space:nowrap">${fmtHM(w.hrs)}</div>
+          </div>`;
+        }).join('')}
+      </div>` : '';
+
   return `${head}
     <div class="content tight">
       <div class="card pad">
@@ -1701,6 +1779,7 @@ function renderTimesheet() {
         </div>
       </div>
       ${monthCard}
+      ${weeksCard}
 
       <div class="section-title">Entries</div>
       <div class="col">
