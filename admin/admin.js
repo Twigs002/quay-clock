@@ -34,7 +34,7 @@ const state = {
     roster: null,        // for staff directory + counts
     tsEvents: null,      // events for the selected timesheet period
   },
-  tsPeriod: 'this-week', // this-week | last-week | this-month | last-month
+  tsPeriod: 'this-week', // this-week | last-week | this-cycle | last-cycle | custom
   tsLayout: 'grid',      // grid (per-day matrix) | list (flat Connecteam-style shifts)
   tsDetail: null,        // { agentId, agentName } when detail modal open
   showArchived: false,   // Team view: include archived (active=false) staff

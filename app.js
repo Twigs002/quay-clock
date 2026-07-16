@@ -130,6 +130,17 @@ function startOfWeek(d) {
 function endOfWeek(d) {
   const s = startOfWeek(d); const e = new Date(s); e.setDate(e.getDate() + 6); e.setHours(23,59,59,999); return e;
 }
+// Pay cycle = 21st of month M → 20th of month M+1 inclusive (Quay 1 monthly
+// period). "This cycle" is whichever cycle includes `d`. Mirrors admin.js.
+function payCycleFor(d) {
+  const x = new Date(d);
+  const y = x.getFullYear(), m = x.getMonth(), day = x.getDate();
+  // On/after the 21st → cycle starts THIS month's 21st; else LAST month's 21st.
+  const startMonth = day >= 21 ? m : m - 1;
+  const from = new Date(y, startMonth, 21, 0,0,0);
+  const to   = new Date(y, startMonth + 1, 20, 23,59,59);
+  return { from, to };
+}
 
 function escapeHtml(s) {
   return String(s == null ? '' : s)
@@ -273,10 +284,11 @@ async function loadTimesheet() {
   const now = new Date();
   const wFrom = startOfWeek(now).toISOString();
   const wTo   = endOfWeek(now).toISOString();
-  // Month-to-date covers the FULL current calendar month so the
+  // Cycle-to-date covers the FULL current pay cycle (21st → 20th) so the
   // monthly target counts working days that haven't happened yet too.
-  const mFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const mTo   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+  const cyc = payCycleFor(now);
+  const mFrom = cyc.from.toISOString();
+  const mTo   = cyc.to.toISOString();
   const [weekData, monthData] = await Promise.all([
     api('events', { agent_id: state.agent.id, from: wFrom, to: wTo }),
     api('events', { agent_id: state.agent.id, from: mFrom, to: mTo }),
@@ -286,7 +298,7 @@ async function loadTimesheet() {
 }
 
 function buildMonthSummary(events, now) {
-  // Pair in/out, sum hours that fall in the current calendar month.
+  // Pair in/out, sum hours that fall in the current pay cycle (21st → 20th).
   let total = 0;
   let openIn = null;
   const sorted = (events || []).slice().sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
@@ -310,24 +322,26 @@ function buildMonthSummary(events, now) {
     const inDate = new Date(openIn.ts);
     total += Math.max(0, (Date.now() - inDate.getTime()) / 3.6e6);
   }
-  // Target = weekdays in month × 9h (matches the 45h/week framing —
-  // 9h/day incl. PAID teas + lunch, breaks are never deducted).
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const lastDay = new Date(y, m + 1, 0).getDate();
+  // Target = weekdays in the pay cycle (21st → 20th) × 9h (matches the
+  // 45h/week framing — 9h/day incl. PAID teas + lunch, never deducted).
+  const cyc = payCycleFor(now);
   let weekdays = 0;
-  for (let d = 1; d <= lastDay; d++) {
-    const dow = new Date(y, m, d).getDay();
+  const cur = new Date(cyc.from.getFullYear(), cyc.from.getMonth(), cyc.from.getDate());
+  const stop = new Date(cyc.to.getFullYear(), cyc.to.getMonth(), cyc.to.getDate());
+  while (cur <= stop) {
+    const dow = cur.getDay();
     if (dow >= 1 && dow <= 5) weekdays++;
+    cur.setDate(cur.getDate() + 1);
   }
   const target = weekdays * 9;
   const overtime = total - target;
   const toGoTxt = overtime > 0 ? `+${fmtHM(overtime)} overtime` : `${fmtHM(target - total)} to go`;
+  const f = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   return {
     totalHrs: total,
     target,
     toGoTxt,
-    monthLabel: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+    monthLabel: `${f(cyc.from)} – ${f(cyc.to)}`,
   };
 }
 async function loadLeave() {
