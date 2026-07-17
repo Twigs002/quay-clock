@@ -2545,7 +2545,7 @@ function renderStaffModal() {
         <div class="field-row">
           <label class="field"><span>Designation</span>
             <select id="sfDesignation">
-              ${['super_admin','manager','rm','fancy','ln','assistant','admin_assistant'].map(d => `
+              ${['super_admin','manager','rm','fancy','ln','assistant','admin_assistant','payroll'].map(d => `
                 <option value="${d}" ${f.designation === d ? 'selected' : ''}>${
                   d === 'super_admin'     ? 'Super Admin' :
                   d === 'manager'         ? 'Manager' :
@@ -2553,6 +2553,7 @@ function renderStaffModal() {
                   d === 'fancy'           ? 'Fancy Caller' :
                   d === 'ln'              ? 'LN (Lead Nurturer)' :
                   d === 'admin_assistant' ? 'Admin Assistant' :
+                  d === 'payroll'         ? 'Payroll (dashboard access)' :
                   'Assistant'
                 }</option>`).join('')}
             </select>
