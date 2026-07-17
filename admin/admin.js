@@ -88,7 +88,7 @@ async function boot() {
           _reReadyTimer = setTimeout(_requestFresh, msUntilRefresh);
         }
         const staff = await window.QD.loadSelfStaff();
-        if (staff && staff.is_admin) {
+        if (staff && (staff.is_admin || staff.designation === 'payroll')) {
           state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true, super: !!staff.is_super, is_super: !!staff.is_super };
           writeSession(state.admin);
           await loadAll();
@@ -105,7 +105,7 @@ async function boot() {
   // moment ago, or a prior visit).
   try {
     const staff = window.QD ? await window.QD.loadSelfStaff() : null;
-    if (staff && staff.is_admin) {
+    if (staff && (staff.is_admin || staff.designation === 'payroll')) {
       state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true, super: !!staff.is_super, is_super: !!staff.is_super };
       writeSession(state.admin);
       loadAll();
