@@ -1,12 +1,11 @@
--- Quay 1 — split Brokers management out of the superuser grant
+-- Quay 1 — reserved can_manage_brokers column (future broker delegation)
 -- ============================================================
--- The Brokers sub-view (dashboard v2 Staff tab) was gated on is_super, so
--- every superuser saw it. We want a superuser (e.g. Alan) to keep Staff /
--- Leadership / Teams / Payroll but NOT see Brokers. Add a dedicated
--- can_manage_brokers grant that the dashboard gates the Brokers view on.
---
--- Defaults to false for everyone — no one sees Brokers until explicitly
--- granted. Grant it to whoever should manage broker logins (see step 3).
+-- The Brokers sub-view (dashboard v2 Staff tab) is gated on is_super, so it is
+-- visible to superusers only (Alan is a plain admin, is_super=false, and is
+-- already excluded). This column is a RESERVED hook for later delegating
+-- broker management to a specific NON-super without granting full super — the
+-- dashboard does not read it yet. Kept guard-protected so only supers can set
+-- it. Defaults to false for everyone; harmless while unused.
 -- ============================================================
 
 -- 1. New column -------------------------------------------------
@@ -14,7 +13,7 @@ alter table public.staff
   add column if not exists can_manage_brokers boolean not null default false;
 
 comment on column public.staff.can_manage_brokers is
-  'Grants access to the Brokers sub-view on the dashboard Staff tab (add/edit broker logins). Separate from is_super: a superuser without this flag sees Staff but not Brokers.';
+  'RESERVED: future grant for delegating the Brokers sub-view to a non-super. Not read by the dashboard yet — Brokers is currently gated on is_super. Guard-protected: only supers may set it.';
 
 -- 2. Tighten the admin write-guard -------------------------------
 -- Add can_manage_brokers to the set of protected columns only supers may
