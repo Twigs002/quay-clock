@@ -1783,6 +1783,11 @@ function renderEventEditor() {
       : (stillOpen && dayMs === 0 ? '- so far' : _fmtDurationMs(dayMs) + (stillOpen ? ' so far' : ''));
     const inIdx  = first.inItem  ? first.inItem.idx  : '';
     const outIdx = first.outItem ? first.outItem.idx : '';
+    // Team note lives on the clock-IN event (same field payroll allocates by).
+    // Show it per day so the manager can see which shifts have no team and
+    // fill them before the pay run closes.
+    const primaryNote = first.inItem ? String(first.inItem.ev.note || '').trim() : '';
+    const noteMissing = !!first.inItem && !primaryNote;
     // Extra shifts on a split-shift day render as a nested list under the summary.
     const extraShiftsHtml = isSplit ? day.shifts.slice(1).map(s => {
       const sIn  = s.inItem  ? _hhmmFromTs(s.inItem.ev.ts)  : '';
@@ -1790,12 +1795,14 @@ function renderEventEditor() {
       const sInIdx  = s.inItem  ? s.inItem.idx  : '';
       const sOutIdx = s.outItem ? s.outItem.idx : '';
       const sMs = (s.inItem && s.outItem) ? new Date(s.outItem.ev.ts) - new Date(s.inItem.ev.ts) : 0;
+      const sNote = s.inItem ? String(s.inItem.ev.note || '').trim() : '';
       return `<div class="ts-shift">
         <span class="ts-shift-lbl">IN</span>
         <input type="time" class="ts-time" data-shift-in="${sInIdx}" value="${sIn}">
         <span class="ts-shift-lbl">OUT</span>
         <input type="time" class="ts-time" data-shift-out="${sOutIdx}" value="${sOut}">
         <span class="ts-shift-total tnum">${_fmtDurationMs(sMs)}</span>
+        <span class="ts-shift-note">${sNote ? escapeHtml(sNote) : '<span class="ts-note-missing">no team</span>'}</span>
       </div>`;
     }).join('') : '';
     return `<tr class="ts-row${rowFlag ? ' ts-row--flag' : ''}${holiday ? ' ts-row--holiday' : ''}" data-day="${day.date}">
@@ -1810,12 +1817,16 @@ function renderEventEditor() {
       <td class="ts-col-out">
         <input type="time" class="ts-time${missingOut ? ' ts-time--flag' : ''}" data-out-idx="${outIdx}" value="${outTime}" ${outIdx === '' ? 'data-empty="1" placeholder="- -"' : ''}>
       </td>
+      <td class="ts-col-note">${
+        primaryNote ? `<span class="ts-note-team">${escapeHtml(primaryNote)}</span>`
+        : (noteMissing ? `<span class="ts-note-missing">no team</span>` : `<span class="muted">&middot;</span>`)
+      }</td>
       <td class="ts-col-total tnum">${escapeHtml(totalTxt)}</td>
       <td class="ts-col-actions">
         <button class="btn small primary" data-day-save="${day.date}">Save</button>
         <button class="btn small" data-day-menu="${day.date}" aria-label="More" title="More actions">&#8942;</button>
       </td>
-      ${isSplit ? `<td colspan="5" class="ts-split-cell">${extraShiftsHtml}</td>` : ''}
+      ${isSplit ? `<td colspan="6" class="ts-split-cell">${extraShiftsHtml}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -1853,6 +1864,7 @@ function renderEventEditor() {
               <th class="ts-col-day">Day</th>
               <th class="ts-col-in">In</th>
               <th class="ts-col-out">Out</th>
+              <th class="ts-col-note">Note / Team</th>
               <th class="ts-col-total tnum">Total</th>
               <th class="ts-col-actions"></th>
             </tr>
@@ -1860,7 +1872,7 @@ function renderEventEditor() {
           <tbody>${rows}</tbody>
           <tfoot>
             <tr>
-              <td colspan="3" class="ts-foot-label">Total across shown days</td>
+              <td colspan="4" class="ts-foot-label">Total across shown days</td>
               <td class="ts-foot-total tnum">${_fmtDurationMs(weekMs)}</td>
               <td></td>
             </tr>
