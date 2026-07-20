@@ -1879,8 +1879,7 @@ function renderEventEditor() {
         ${hasExtra && primaryDelIds ? `<button class="btn small ts-shift-del" data-del-events="${primaryDelIds}" title="Delete this clock punch">Delete</button>` : ''}
         <button class="btn small" data-day-menu="${day.date}" aria-label="More" title="More actions">&#8942;</button>
       </td>
-      ${hasExtra ? `<td colspan="6" class="ts-split-cell">${extraShiftsHtml}</td>` : ''}
-    </tr>`;
+    </tr>${hasExtra ? `<tr class="ts-extra-row${holiday ? ' ts-row--holiday' : ''}" data-extra-for="${day.date}"><td colspan="6" class="ts-split-cell">${extraShiftsHtml}</td></tr>` : ''}`;
   }).join('');
 
   const addBlock = e.adding ? `
