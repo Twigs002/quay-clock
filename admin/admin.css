@@ -580,6 +580,9 @@ td.reason-cell.details-open .reason-text {
   vertical-align: middle; font-size: 13px; color: var(--ink);
 }
 .ts-col-day { width: 150px; }
+/* Deep-link landing flash: briefly highlight the day a manager jumped to. */
+@keyframes tsRowFlash { 0% { background: #FFF3C4; } 100% { background: transparent; } }
+.ts-row--flash > td { animation: tsRowFlash 1.6s ease-out; }
 .ts-day-name { font-weight: 700; color: var(--ink); }
 .ts-day-year { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .ts-badges { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }

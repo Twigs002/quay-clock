@@ -70,6 +70,13 @@ async function boot() {
     window.addEventListener('message', async (ev) => {
       if (!ALLOWED_PARENTS.has(ev.origin)) return;
       const m = ev.data;
+      // Deep-link from the dashboard payroll view: open a staff member's
+      // timesheet editor on an exact day. Stash it and open once data is ready.
+      if (m && m.type === 'quay-open-editor' && m.staffId) {
+        state._pendingEdit = { staffId: m.staffId, day: m.day || null, agentName: m.agentName || m.staffId };
+        maybeOpenPendingEdit();
+        return;
+      }
       if (!m || m.type !== 'quay-supabase-session' || !m.session) return;
       try {
         await window.sb.auth.setSession({
@@ -93,6 +100,7 @@ async function boot() {
           writeSession(state.admin);
           await loadAll();
           render();
+          maybeOpenPendingEdit();
         }
       } catch (e) { /* fall through to local gate */ }
     });
@@ -1605,6 +1613,38 @@ function wkLabel(start, end) {
   return `${sd} ${start.toLocaleDateString('en-GB', { month: 'short' })} – ${ed} ${end.toLocaleDateString('en-GB', { month: 'short' })}`;
 }
 
+// Deep-link from the dashboard: open a staff member's editor on an exact day.
+// Only fires once auth + data are ready; the message may arrive before either,
+// so this is called both on receipt and after loadAll().
+function maybeOpenPendingEdit() {
+  const p = state._pendingEdit;
+  if (!p) return;
+  if (state.loading || !state.data || !state.admin) return; // not ready yet
+  state._pendingEdit = null;
+  state.view = 'timesheets';
+  state._scrollToDay = p.day || null;
+  openEventEditor(p.staffId, p.agentName || p.staffId);
+}
+
+// Scroll the open editor to a specific day row and flash it. Retries briefly
+// because the full-history rows render a tick after the fetch resolves.
+function scrollEditorToDay(day) {
+  if (!day) return;
+  let tries = 0;
+  const tick = () => {
+    const row = document.querySelector(`tr.ts-row[data-day="${day}"]`);
+    if (row) {
+      state._scrollToDay = null;
+      row.scrollIntoView({ block: 'center' });
+      row.classList.add('ts-row--flash');
+      setTimeout(() => row.classList.remove('ts-row--flash'), 1600);
+      return;
+    }
+    if (tries++ < 25) setTimeout(tick, 100);
+  };
+  tick();
+}
+
 // ── Event editor (admin manual clock-in/out edits) ──────────────────
 async function openEventEditor(agentId, agentName) {
   const sow = startOfWeek(new Date());
@@ -1655,6 +1695,9 @@ async function openEventEditor(agentId, agentName) {
         sastYmd(new Date(all[all.length - 1].ts));
     }
     render();
+    // Deep-link landing: now that the full history rows exist, scroll to the
+    // requested day and flash it.
+    if (state._scrollToDay) scrollEditorToDay(state._scrollToDay);
   } catch (e) {
     if (!state.eventEditor || state.eventEditor.agentId !== agentId) return;
     state.eventEditor.loadingHistory = false;
