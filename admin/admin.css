@@ -681,10 +681,16 @@ td.reason-cell.details-open .reason-text {
 .ts-shift {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 10px; background: #fff; border-radius: 8px;
-  border: 1px solid var(--line); margin-bottom: 6px; max-width: 520px;
+  border: 1px solid var(--line); margin-bottom: 6px; max-width: 640px;
 }
+.ts-shift--orphan { border-color: #E5B4B4; background: #FFF6F6; }
 .ts-shift-lbl { font-size: 10px; color: var(--muted); font-weight: 800; letter-spacing: 0.04em; }
 .ts-shift-total { margin-left: auto; font-weight: 700; }
+/* Delete a duplicate / orphan punch. Red so it reads as destructive. */
+.ts-shift-del, .ts-col-actions .ts-shift-del {
+  color: #B23434; border-color: #E5B4B4; background: #fff;
+}
+.ts-shift-del:hover, .ts-col-actions .ts-shift-del:hover { background: #FFECEC; border-color: #B23434; }
 .ts-addrow {
   display: grid; gap: 8px; align-items: center;
   grid-template-columns: 78px 142px 96px 1fr auto auto;

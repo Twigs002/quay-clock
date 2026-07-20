@@ -1789,6 +1789,10 @@ function renderEventEditor() {
       if (s.inItem && s.outItem) dayMs += new Date(s.outItem.ev.ts) - new Date(s.inItem.ev.ts);
     });
     const isSplit = day.shifts.filter(s => s.inItem && s.outItem).length > 1;
+    // Render EVERY extra segment (a second shift, a duplicate punch, or an
+    // orphaned in/out), not just clean split shifts — otherwise duplicates
+    // are invisible and can't be removed.
+    const hasExtra = day.shifts.length > 1;
     const stillOpen = isToday && day.shifts.some(s => s.inItem && !s.outItem);
     const holiday = publicHolidays.get(day.date);
     const badges = [];
@@ -1818,23 +1822,29 @@ function renderEventEditor() {
     const selectedTeams = parseNoteTeams(primaryNote, teamOptions);
     const optionTeams = Array.from(new Set([...selectedTeams, ...teamOptions]));
     const selSet = new Set(selectedTeams.map(t => t.toLowerCase()));
-    // Extra shifts on a split-shift day render as a nested list under the summary.
-    const extraShiftsHtml = isSplit ? day.shifts.slice(1).map(s => {
+    // Every extra segment (a second shift, a duplicate punch, or an orphaned
+    // in/out) renders as a nested row under the summary, each with its own
+    // Delete so a duplicate can be removed without nuking the whole day.
+    const extraShiftsHtml = hasExtra ? day.shifts.slice(1).map(s => {
       const sIn  = s.inItem  ? _hhmmFromTs(s.inItem.ev.ts)  : '';
       const sOut = s.outItem ? _hhmmFromTs(s.outItem.ev.ts) : '';
       const sInIdx  = s.inItem  ? s.inItem.idx  : '';
       const sOutIdx = s.outItem ? s.outItem.idx : '';
       const sMs = (s.inItem && s.outItem) ? new Date(s.outItem.ev.ts) - new Date(s.inItem.ev.ts) : 0;
       const sNote = s.inItem ? String(s.inItem.ev.note || '').trim() : '';
-      return `<div class="ts-shift">
+      const orphan = !s.inItem || !s.outItem;
+      const delIds = [s.inItem && s.inItem.ev._event_id, s.outItem && s.outItem.ev._event_id].filter(Boolean).join(',');
+      return `<div class="ts-shift${orphan ? ' ts-shift--orphan' : ''}">
         <span class="ts-shift-lbl">IN</span>
-        <input type="time" class="ts-time" data-shift-in="${sInIdx}" value="${sIn}">
+        <input type="time" class="ts-time${!s.inItem ? ' ts-time--flag' : ''}" data-shift-in="${sInIdx}" value="${sIn}"${!s.inItem ? ' data-empty="1" placeholder="- -"' : ''}>
         <span class="ts-shift-lbl">OUT</span>
-        <input type="time" class="ts-time" data-shift-out="${sOutIdx}" value="${sOut}">
-        <span class="ts-shift-total tnum">${_fmtDurationMs(sMs)}</span>
+        <input type="time" class="ts-time${!s.outItem ? ' ts-time--flag' : ''}" data-shift-out="${sOutIdx}" value="${sOut}"${!s.outItem ? ' data-empty="1" placeholder="- -"' : ''}>
+        <span class="ts-shift-total tnum">${orphan ? `<span class="ts-note-missing">${!s.inItem ? 'no in' : 'no out'}</span>` : _fmtDurationMs(sMs)}</span>
         <span class="ts-shift-note">${sNote ? escapeHtml(sNote) : '<span class="ts-note-missing">no team</span>'}</span>
+        <button type="button" class="btn small ts-shift-del" data-del-events="${delIds}" title="Delete this clock ${orphan ? 'punch' : 'shift'}">Delete</button>
       </div>`;
     }).join('') : '';
+    const primaryDelIds = [first.inItem && first.inItem.ev._event_id, first.outItem && first.outItem.ev._event_id].filter(Boolean).join(',');
     return `<tr class="ts-row${rowFlag ? ' ts-row--flag' : ''}${holiday ? ' ts-row--holiday' : ''}" data-day="${day.date}">
       <td class="ts-col-day">
         <div class="ts-day-name">${escapeHtml(lbl.wd + ' ' + lbl.dm)}</div>
@@ -1866,9 +1876,10 @@ function renderEventEditor() {
       <td class="ts-col-total tnum">${escapeHtml(totalTxt)}</td>
       <td class="ts-col-actions">
         <button class="btn small primary" data-day-save="${day.date}">Save</button>
+        ${hasExtra && primaryDelIds ? `<button class="btn small ts-shift-del" data-del-events="${primaryDelIds}" title="Delete this clock punch">Delete</button>` : ''}
         <button class="btn small" data-day-menu="${day.date}" aria-label="More" title="More actions">&#8942;</button>
       </td>
-      ${isSplit ? `<td colspan="6" class="ts-split-cell">${extraShiftsHtml}</td>` : ''}
+      ${hasExtra ? `<td colspan="6" class="ts-split-cell">${extraShiftsHtml}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -1942,6 +1953,13 @@ function wireEventEditor() {
   });
   document.querySelectorAll('button[data-day-menu]').forEach(btn => {
     btn.addEventListener('click', (ev) => openDayMenu(btn.dataset.dayMenu, ev.currentTarget));
+  });
+  // Per-segment delete (removes a duplicate/orphan punch by exact id).
+  document.querySelectorAll('[data-del-events]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ids = String(btn.dataset.delEvents || '').split(',').filter(Boolean);
+      deleteSegmentEvents(ids);
+    });
   });
   // Team multi-select pickers (one per day row).
   wireTeamPickers();
@@ -2178,6 +2196,24 @@ async function saveEvent(idx, row) {
     e.events[idx] = { ...ev, ts: newTs, action: newAction, note: newNote };
     e.error = '';
     showToast('Saved');
+  } catch (err) {
+    e.error = String(err.message || err);
+  }
+  render();
+}
+
+// Delete one or more clock events by their exact UUID (a duplicate/orphan
+// punch). Targeting by id — not timestamp — is safe when two punches share
+// a near-identical time, which is exactly the duplicate case this fixes.
+async function deleteSegmentEvents(ids) {
+  const e = state.eventEditor;
+  if (!e || !ids || !ids.length) return;
+  if (!confirm(`Delete ${ids.length === 1 ? 'this clock event' : 'these ' + ids.length + ' clock events'}? This cannot be undone.`)) return;
+  try {
+    for (const id of ids) await api('event_delete', { agent_id: e.agentId, _event_id: id });
+    e.events = e.events.filter(ev => !ids.includes(ev._event_id));
+    e.error = '';
+    showToast(ids.length === 1 ? 'Deleted' : `Deleted ${ids.length} events`);
   } catch (err) {
     e.error = String(err.message || err);
   }
