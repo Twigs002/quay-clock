@@ -1993,10 +1993,11 @@ function wireTeamPickers() {
       const willOpen = menu.hidden;
       closeAllTeamMenus();
       if (willOpen) {
-        positionTeamMenu(btn, menu);
         menu.hidden = false;
         pick.classList.add('is-open');
-        if (search) { search.value = ''; filterTeamOpts(menu, ''); setTimeout(() => search.focus(), 0); }
+        flipTeamMenuIfNeeded(pick, btn, menu);
+        // preventScroll: never yank the scroll position when the field focuses.
+        if (search) { search.value = ''; filterTeamOpts(menu, ''); setTimeout(() => search.focus({ preventScroll: true }), 0); }
       }
     });
     menu.addEventListener('click', (ev) => ev.stopPropagation());
@@ -2006,8 +2007,6 @@ function wireTeamPickers() {
   if (!window.__teamMenuGlobalWired) {
     window.__teamMenuGlobalWired = true;
     document.addEventListener('click', closeAllTeamMenus);
-    document.addEventListener('scroll', closeAllTeamMenus, true); // capture: catch modal-body scroll
-    window.addEventListener('resize', closeAllTeamMenus);
   }
 }
 
@@ -2017,25 +2016,19 @@ function closeAllTeamMenus() {
   });
 }
 
-function positionTeamMenu(btn, menu) {
-  const r = btn.getBoundingClientRect();
-  const width = 260, maxH = 300;
-  // A transformed ancestor (the Edit modal is translate()-centred) becomes the
-  // containing block for position:fixed, so subtract its rect to keep the menu
-  // pinned under the button. No transform ancestor → cb stays 0,0 (true fixed).
-  let cb = { left: 0, top: 0 };
-  for (let anc = menu.parentElement; anc && anc.nodeType === 1; anc = anc.parentElement) {
-    const t = getComputedStyle(anc).transform;
-    if (t && t !== 'none') { cb = anc.getBoundingClientRect(); break; }
+// The menu is position:absolute under its button (see CSS), so it scrolls with
+// the row and never fights the modal's transform/scroll (which was resetting
+// scroll to the top). If it would spill past the modal's bottom, flip it above.
+function flipTeamMenuIfNeeded(pick, btn, menu) {
+  menu.classList.remove('ts-team-menu--up');
+  const scroller = menu.closest('.ts-modal') || menu.closest('.modal');
+  if (!scroller) return;
+  const mRect = menu.getBoundingClientRect();
+  const sRect = scroller.getBoundingClientRect();
+  const bRect = btn.getBoundingClientRect();
+  if (mRect.bottom > sRect.bottom - 6 && (bRect.top - sRect.top) > mRect.height) {
+    menu.classList.add('ts-team-menu--up');
   }
-  const belowSpace = window.innerHeight - r.bottom;
-  let top = r.bottom + 4;
-  if (belowSpace < maxH + 12 && r.top > belowSpace) top = Math.max(8, r.top - Math.min(maxH, r.top - 8) - 4);
-  const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-  menu.style.position = 'fixed';
-  menu.style.width = width + 'px';
-  menu.style.top = (top - cb.top) + 'px';
-  menu.style.left = (left - cb.left) + 'px';
 }
 
 function filterTeamOpts(menu, q) {

@@ -644,9 +644,11 @@ td.reason-cell.details-open .reason-text {
 .ts-team-picker--flag .ts-team-btn { border-color: #B23434; background: #FFECEC; }
 .ts-team-picker--flag .ts-team-btn-label { color: #B23434; font-weight: 600; }
 .ts-team-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; width: 260px;
   z-index: 9999; background: #fff; border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 12px 34px rgba(15,23,42,.18); padding: 8px; box-sizing: border-box;
 }
+.ts-team-menu--up { top: auto; bottom: calc(100% + 4px); }
 .ts-team-search {
   width: 100%; box-sizing: border-box; padding: 7px 9px; margin-bottom: 6px;
   border: 1px solid var(--line); border-radius: 7px; font: inherit; font-size: 13px; outline: none;
