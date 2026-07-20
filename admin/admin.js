@@ -329,6 +329,15 @@ async function loadAll() {
     if (!state.data.publicHolidays || state.data.publicHolidays.size === 0) {
       state.data.publicHolidays = await loadPublicHolidays();
     }
+    // Canonical teams for the timesheet team picker — payroll allocates hours
+    // by these. Loaded once per session; degrades to teams already seen in
+    // notes if the table can't be read.
+    if (!state.data.payrollTeams || !state.data.payrollTeams.length) {
+      try {
+        const tr = await window.sb.from('payroll_canonical_divisions').select('name').order('name');
+        state.data.payrollTeams = (tr.data || []).map(x => x.name).filter(Boolean);
+      } catch { state.data.payrollTeams = []; }
+    }
     // Initial Timesheets payload mirrors the dashboard's current-week events.
     if (state.tsPeriod === 'this-week') {
       state.data.tsEvents = state.data.weekEvents;
@@ -1731,9 +1740,25 @@ function _flagGlyph() {
   return `<svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor" style="margin-right:3px;vertical-align:-1px"><path d="M2 1v10h1.4V7h5.2l-.7-1.5.7-1.5H3.4V1H2z"/></svg>`;
 }
 
+// Split an existing shift note into its teams, matched to canonical casing.
+// Mirrors the payroll splitter (/, &, comma, "and"). Unknown fragments are
+// kept as-is so an existing value is never silently dropped on save.
+function parseNoteTeams(note, canonical) {
+  if (!note) return [];
+  const byLc = new Map((canonical || []).map(t => [t.toLowerCase(), t]));
+  const out = [], seen = new Set();
+  String(note).split(/\s*(?:\/|&|,|\band\b)\s*/i).map(s => s.trim()).filter(Boolean)
+    .forEach(p => {
+      const v = byLc.get(p.toLowerCase()) || p;
+      if (!seen.has(v.toLowerCase())) { seen.add(v.toLowerCase()); out.push(v); }
+    });
+  return out;
+}
+
 function renderEventEditor() {
   const e = state.eventEditor;
   const days = _groupEventsByDay(e.events);
+  const teamOptions = (state.data && state.data.payrollTeams) || [];
   const todayKey = sastYmd(new Date());
   const publicHolidays = state.data.publicHolidays || new Map();
 
@@ -1788,6 +1813,11 @@ function renderEventEditor() {
     // fill them before the pay run closes.
     const primaryNote = first.inItem ? String(first.inItem.ev.note || '').trim() : '';
     const noteMissing = !!first.inItem && !primaryNote;
+    // Teams currently on this day's note, and the full option list (existing
+    // values first so an off-list team is preserved and pre-checked).
+    const selectedTeams = parseNoteTeams(primaryNote, teamOptions);
+    const optionTeams = Array.from(new Set([...selectedTeams, ...teamOptions]));
+    const selSet = new Set(selectedTeams.map(t => t.toLowerCase()));
     // Extra shifts on a split-shift day render as a nested list under the summary.
     const extraShiftsHtml = isSplit ? day.shifts.slice(1).map(s => {
       const sIn  = s.inItem  ? _hhmmFromTs(s.inItem.ev.ts)  : '';
@@ -1819,7 +1849,18 @@ function renderEventEditor() {
       </td>
       <td class="ts-col-note">${
         first.inItem
-          ? `<input type="text" class="ts-note-input${noteMissing ? ' ts-note-input--flag' : ''}" data-note-in-idx="${inIdx}" value="${escapeHtml(primaryNote)}" placeholder="add team" autocomplete="off" spellcheck="false">`
+          ? `<div class="ts-team-picker${noteMissing ? ' ts-team-picker--flag' : ''}" data-note-in-idx="${inIdx}">
+               <button type="button" class="ts-team-btn" data-team-btn>
+                 <span class="ts-team-btn-label">${selectedTeams.length ? escapeHtml(selectedTeams.join(' / ')) : 'add team'}</span>
+                 <span class="ts-team-caret" aria-hidden="true">&#9662;</span>
+               </button>
+               <div class="ts-team-menu" data-team-menu hidden>
+                 <input type="text" class="ts-team-search" data-team-search placeholder="Search teams&hellip;" autocomplete="off" spellcheck="false">
+                 <div class="ts-team-list">
+                   ${optionTeams.map(t => `<label class="ts-team-opt"><input type="checkbox" value="${escapeHtml(t)}"${selSet.has(t.toLowerCase()) ? ' checked' : ''}><span>${escapeHtml(t)}</span></label>`).join('')}
+                 </div>
+               </div>
+             </div>`
           : `<span class="muted">&middot;</span>`
       }</td>
       <td class="ts-col-total tnum">${escapeHtml(totalTxt)}</td>
@@ -1902,15 +1943,8 @@ function wireEventEditor() {
   document.querySelectorAll('button[data-day-menu]').forEach(btn => {
     btn.addEventListener('click', (ev) => openDayMenu(btn.dataset.dayMenu, ev.currentTarget));
   });
-  // Enter in a team-note field saves that day's row.
-  document.querySelectorAll('input[data-note-in-idx]').forEach(inp => {
-    inp.addEventListener('keydown', (ev) => {
-      if (ev.key !== 'Enter') return;
-      ev.preventDefault();
-      const tr = inp.closest('tr.ts-row');
-      if (tr) saveDayShift(tr.dataset.day);
-    });
-  });
+  // Team multi-select pickers (one per day row).
+  wireTeamPickers();
 
   const showAdd = document.getElementById('evShowAdd');
   if (showAdd) showAdd.addEventListener('click', () => { state.eventEditor.adding = true; render(); });
@@ -1918,6 +1952,72 @@ function wireEventEditor() {
   if (cancel) cancel.addEventListener('click', () => { state.eventEditor.adding = false; render(); });
   const addBtn = document.getElementById('evAdd');
   if (addBtn) addBtn.addEventListener('click', addEvent);
+}
+
+// ── Team multi-select picker (per day row) ───────────────────────────
+// A button that opens a searchable checkbox menu of canonical teams. The
+// menu is position:fixed and positioned from the button's rect on open, so
+// it escapes the scrolling modal's overflow (no clipping). Selected teams
+// join with " / " into the note payroll splits on.
+function wireTeamPickers() {
+  document.querySelectorAll('.ts-team-picker').forEach(pick => {
+    const btn = pick.querySelector('[data-team-btn]');
+    const menu = pick.querySelector('[data-team-menu]');
+    const label = pick.querySelector('.ts-team-btn-label');
+    const search = pick.querySelector('[data-team-search]');
+    if (!btn || !menu) return;
+    const syncLabel = () => {
+      const sel = [...menu.querySelectorAll('input[type="checkbox"]:checked')].map(c => c.value);
+      label.textContent = sel.length ? sel.join(' / ') : 'add team';
+      pick.classList.toggle('ts-team-picker--flag', sel.length === 0);
+    };
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const willOpen = menu.hidden;
+      closeAllTeamMenus();
+      if (willOpen) {
+        positionTeamMenu(btn, menu);
+        menu.hidden = false;
+        pick.classList.add('is-open');
+        if (search) { search.value = ''; filterTeamOpts(menu, ''); setTimeout(() => search.focus(), 0); }
+      }
+    });
+    menu.addEventListener('click', (ev) => ev.stopPropagation());
+    if (search) search.addEventListener('input', () => filterTeamOpts(menu, search.value));
+    menu.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.addEventListener('change', syncLabel));
+  });
+  if (!window.__teamMenuGlobalWired) {
+    window.__teamMenuGlobalWired = true;
+    document.addEventListener('click', closeAllTeamMenus);
+    document.addEventListener('scroll', closeAllTeamMenus, true); // capture: catch modal-body scroll
+    window.addEventListener('resize', closeAllTeamMenus);
+  }
+}
+
+function closeAllTeamMenus() {
+  document.querySelectorAll('[data-team-menu]').forEach(m => {
+    if (!m.hidden) { m.hidden = true; const p = m.closest('.ts-team-picker'); if (p) p.classList.remove('is-open'); }
+  });
+}
+
+function positionTeamMenu(btn, menu) {
+  const r = btn.getBoundingClientRect();
+  const width = 260, maxH = 300;
+  menu.style.position = 'fixed';
+  menu.style.width = width + 'px';
+  const belowSpace = window.innerHeight - r.bottom;
+  let top = r.bottom + 4;
+  if (belowSpace < maxH + 12 && r.top > belowSpace) top = Math.max(8, r.top - Math.min(maxH, r.top - 8) - 4);
+  menu.style.top = top + 'px';
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8)) + 'px';
+}
+
+function filterTeamOpts(menu, q) {
+  const s = String(q || '').trim().toLowerCase();
+  menu.querySelectorAll('.ts-team-opt').forEach(opt => {
+    const t = opt.textContent.trim().toLowerCase();
+    opt.style.display = (!s || t.includes(s)) ? '' : 'none';
+  });
 }
 
 // Save any changes to the primary IN and OUT of a day. Uses the existing
@@ -1937,10 +2037,13 @@ async function saveDayShift(dateKey) {
     // clock-IN event (the field payroll allocates hours by), so this is how a
     // manager fills a missing team. Target the exact row by its UUID so a
     // duplicate-timestamp punch can't be edited by mistake.
-    const noteInput = row.querySelector('input[data-note-in-idx]');
+    const picker = row.querySelector('.ts-team-picker[data-note-in-idx]');
+    const pickedNote = picker
+      ? [...picker.querySelectorAll('[data-team-menu] input[type="checkbox"]:checked')].map(c => c.value).join(' / ')
+      : null;
     if (inIdxStr !== '' && inNew) {
       const ev = e.events[Number(inIdxStr)];
-      const newNote = noteInput ? noteInput.value.trim() : (ev.note || '');
+      const newNote = pickedNote != null ? pickedNote : (ev.note || '');
       const timeChanged = _hhmmFromTs(ev.ts) !== inNew;
       const noteChanged = (ev.note || '') !== newNote;
       if (timeChanged || noteChanged) {
@@ -1951,7 +2054,7 @@ async function saveDayShift(dateKey) {
       }
     } else if (inIdxStr === '' && inNew) {
       // No prior IN, user typed one; insert (with the team note if given).
-      const newNote = noteInput ? noteInput.value.trim() : '';
+      const newNote = pickedNote != null ? pickedNote : '';
       const newTs = new Date(dateKey + 'T' + inNew + ':00').toISOString();
       await api('event_add', { agent_id: e.agentId, ts: newTs, dir: 'in', note: newNote });
       e.events.push({ ts: newTs, action: 'in', note: newNote });
