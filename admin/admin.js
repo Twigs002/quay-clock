@@ -1818,8 +1818,9 @@ function renderEventEditor() {
         <input type="time" class="ts-time${missingOut ? ' ts-time--flag' : ''}" data-out-idx="${outIdx}" value="${outTime}" ${outIdx === '' ? 'data-empty="1" placeholder="- -"' : ''}>
       </td>
       <td class="ts-col-note">${
-        primaryNote ? `<span class="ts-note-team">${escapeHtml(primaryNote)}</span>`
-        : (noteMissing ? `<span class="ts-note-missing">no team</span>` : `<span class="muted">&middot;</span>`)
+        first.inItem
+          ? `<input type="text" class="ts-note-input${noteMissing ? ' ts-note-input--flag' : ''}" data-note-in-idx="${inIdx}" value="${escapeHtml(primaryNote)}" placeholder="add team" autocomplete="off" spellcheck="false">`
+          : `<span class="muted">&middot;</span>`
       }</td>
       <td class="ts-col-total tnum">${escapeHtml(totalTxt)}</td>
       <td class="ts-col-actions">
@@ -1854,7 +1855,7 @@ function renderEventEditor() {
       </div>
       <div class="modal-body">
         <div class="ev-help">
-          Each row is one day. Edit the IN and OUT times, click Save on that row.
+          Each row is one day. Edit the IN and OUT times or the team note, then click Save on that row.
           ${e.loadingHistory ? `<span class="muted" style="margin-left:6px">Loading full history...</span>` : ''}
         </div>
         ${e.events.length === 0 ? `<div class="muted" style="font-size:13px;padding:6px 0">${e.loadingHistory ? 'Loading events for this agent...' : 'No events found for this agent.'}</div>` : `
@@ -1901,6 +1902,15 @@ function wireEventEditor() {
   document.querySelectorAll('button[data-day-menu]').forEach(btn => {
     btn.addEventListener('click', (ev) => openDayMenu(btn.dataset.dayMenu, ev.currentTarget));
   });
+  // Enter in a team-note field saves that day's row.
+  document.querySelectorAll('input[data-note-in-idx]').forEach(inp => {
+    inp.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      const tr = inp.closest('tr.ts-row');
+      if (tr) saveDayShift(tr.dataset.day);
+    });
+  });
 
   const showAdd = document.getElementById('evShowAdd');
   if (showAdd) showAdd.addEventListener('click', () => { state.eventEditor.adding = true; render(); });
@@ -1923,22 +1933,28 @@ async function saveDayShift(dateKey) {
   const inNew  = inInput  ? inInput.value  : '';
   const outNew = outInput ? outInput.value : '';
   try {
-    // Update IN row if one exists and the time changed.
+    // Update IN row: its time and/or its team note. The note lives on the
+    // clock-IN event (the field payroll allocates hours by), so this is how a
+    // manager fills a missing team. Target the exact row by its UUID so a
+    // duplicate-timestamp punch can't be edited by mistake.
+    const noteInput = row.querySelector('input[data-note-in-idx]');
     if (inIdxStr !== '' && inNew) {
       const ev = e.events[Number(inIdxStr)];
-      const currentHHMM = _hhmmFromTs(ev.ts);
-      if (currentHHMM !== inNew) {
-        const newTs = new Date(dateKey + 'T' + inNew + ':00').toISOString();
-        await api('event_update', {
-          agent_id: e.agentId, ts: ev.ts, new_ts: newTs, dir: ev.action, note: ev.note || '',
-        });
-        e.events[Number(inIdxStr)] = { ...ev, ts: newTs };
+      const newNote = noteInput ? noteInput.value.trim() : (ev.note || '');
+      const timeChanged = _hhmmFromTs(ev.ts) !== inNew;
+      const noteChanged = (ev.note || '') !== newNote;
+      if (timeChanged || noteChanged) {
+        const upd = { agent_id: e.agentId, _event_id: ev._event_id, ts: ev.ts, dir: ev.action, note: newNote };
+        if (timeChanged) upd.new_ts = new Date(dateKey + 'T' + inNew + ':00').toISOString();
+        await api('event_update', upd);
+        e.events[Number(inIdxStr)] = { ...ev, ts: upd.new_ts || ev.ts, note: newNote };
       }
     } else if (inIdxStr === '' && inNew) {
-      // No prior IN, user typed one; insert.
+      // No prior IN, user typed one; insert (with the team note if given).
+      const newNote = noteInput ? noteInput.value.trim() : '';
       const newTs = new Date(dateKey + 'T' + inNew + ':00').toISOString();
-      await api('event_add', { agent_id: e.agentId, ts: newTs, dir: 'in', note: '' });
-      e.events.push({ ts: newTs, action: 'in', note: '' });
+      await api('event_add', { agent_id: e.agentId, ts: newTs, dir: 'in', note: newNote });
+      e.events.push({ ts: newTs, action: 'in', note: newNote });
     }
     // Update OUT row.
     if (outIdxStr !== '' && outNew) {
