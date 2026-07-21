@@ -355,6 +355,24 @@ const handlers = {
     return { ok: true, summary };
   },
 
+  // SA public holidays for the timesheet + monthly target. Where a holiday
+  // falls on a Sunday it is observed the following Monday (observed_date);
+  // `date` in the response is the effective day staff are off. Reads the
+  // same sa_public_holidays table the admin timesheet uses.
+  async public_holidays(payload = {}) {
+    let q = sb.from('sa_public_holidays').select('date, name, observed_date');
+    if (payload.from) q = q.gte('date', payload.from);
+    if (payload.to)   q = q.lte('date', payload.to);
+    const { data, error } = await q;
+    if (error) return { ok: false, error: error.message };
+    const holidays = (data || []).map((r) => ({
+      date: r.observed_date || r.date,   // effective day off
+      actual_date: r.date,
+      name: r.name,
+    }));
+    return { ok: true, holidays };
+  },
+
   async roster(payload = {}) {
     // include_inactive=true returns archived (active=false) staff as well,
     // used by the admin Team page so admins can unarchive someone. Defaults

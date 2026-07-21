@@ -289,16 +289,19 @@ async function loadTimesheet() {
   const cyc = payCycleFor(now);
   const mFrom = cyc.from.toISOString();
   const mTo   = cyc.to.toISOString();
-  const [weekData, monthData] = await Promise.all([
+  const [weekData, monthData, holData] = await Promise.all([
     api('events', { agent_id: state.agent.id, from: wFrom, to: wTo }),
     api('events', { agent_id: state.agent.id, from: mFrom, to: mTo }),
+    // Public holidays for the cycle — used to exclude non-working holiday
+    // days from the monthly target. Non-fatal: fall back to none on error.
+    api('public_holidays', {}).catch(() => ({ holidays: [] })),
   ]);
   state.timesheet = buildTimesheet(weekData.events, now);
-  state.timesheet.monthSummary = buildMonthSummary(monthData.events, now);
+  state.timesheet.monthSummary = buildMonthSummary(monthData.events, now, holData.holidays || []);
   state.timesheet.cycleWeeks = buildCycleWeeks(monthData.events, now);
 }
 
-function buildMonthSummary(events, now) {
+function buildMonthSummary(events, now, holidays = []) {
   // Pair in/out, sum hours that fall in the current pay cycle (21st → 20th).
   let total = 0;
   let openIn = null;
@@ -325,13 +328,26 @@ function buildMonthSummary(events, now) {
   }
   // Target = weekdays in the pay cycle (21st → 20th) × 9h (matches the
   // 45h/week framing — 9h/day incl. PAID teas + lunch, never deducted).
+  // SA public holidays are UNPAID non-working days, so a holiday landing on
+  // a weekday is NOT counted toward the target (nobody is expected to work
+  // it). Holidays on a weekend don't change the weekday count.
   const cyc = payCycleFor(now);
+  const holSet = new Set((holidays || []).map((h) => h.date)); // effective (observed) dates
+  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const monShort = (d) => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   let weekdays = 0;
+  const cycleHolidays = [];
   const cur = new Date(cyc.from.getFullYear(), cyc.from.getMonth(), cyc.from.getDate());
   const stop = new Date(cyc.to.getFullYear(), cyc.to.getMonth(), cyc.to.getDate());
   while (cur <= stop) {
     const dow = cur.getDay();
-    if (dow >= 1 && dow <= 5) weekdays++;
+    const key = ymd(cur);
+    const isHoliday = holSet.has(key);
+    if (isHoliday) {
+      const h = (holidays || []).find((x) => x.date === key);
+      cycleHolidays.push({ date: key, name: h ? h.name : 'Public holiday', label: monShort(new Date(cur)) });
+    }
+    if (dow >= 1 && dow <= 5 && !isHoliday) weekdays++;
     cur.setDate(cur.getDate() + 1);
   }
   const target = weekdays * 9;
@@ -343,6 +359,7 @@ function buildMonthSummary(events, now) {
     target,
     toGoTxt,
     monthLabel: `${f(cyc.from)} – ${f(cyc.to)}`,
+    holidays: cycleHolidays,
   };
 }
 
@@ -1732,6 +1749,11 @@ function renderTimesheet() {
           </div>
           <span class="pill" style="background:var(--skySoft);color:var(--blue)">${escapeHtml(ms.toGoTxt)}</span>
         </div>
+        ${ms.holidays && ms.holidays.length ? `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line, #e6e6e6);font-size:12.5px;color:var(--muted)">
+          🇿🇦 Public holiday${ms.holidays.length > 1 ? 's' : ''} this cycle (unpaid, excluded from target):
+          ${ms.holidays.map((h) => `<b style="color:var(--ink,inherit)">${escapeHtml(h.label)}</b> — ${escapeHtml(h.name)}`).join('; ')}
+        </div>` : ''}
       </div>` : '';
 
   const cw = ts.cycleWeeks;
