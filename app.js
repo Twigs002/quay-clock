@@ -1984,10 +1984,7 @@ function renderTimesheetPeriod(pv) {
   const tiles = `
     <div class="ts-tiles">
       ${tile('Work hours', fmtHM(pv.totalHrs), '#1FA463')}
-      ${tile('Paid absences', '0:00', '#B7791F')}
       ${tile('Total paid', fmtHM(pv.totalHrs), '#3D5BA6')}
-      ${tile('Regular', fmtHM(pv.regular), '#2F8FB3')}
-      ${tile('Overtime', pv.overtime > 0 ? '+' + fmtHM(pv.overtime) : '0:00', '#6B7280')}
       ${tile('Target', fmtHM(pv.target), '#6B7280')}
     </div>`;
   const rowsHtml = pv.rows.length === 0
@@ -2069,7 +2066,6 @@ function exportTimesheetCSV() {
     rows.push([]);
     rows.push(['Total', '', '', '', fmtHM(pv.totalHrs)]);
     rows.push(['Target', '', '', '', fmtHM(pv.target)]);
-    rows.push(['Overtime', '', '', '', pv.overtime > 0 ? fmtHM(pv.overtime) : '0:00']);
     downloadCSV(`timesheet-${safeId}-${pv.from.toISOString().slice(0,10)}.csv`, rows);
     return;
   }
@@ -2093,10 +2089,7 @@ function exportTimesheetPDF() {
     periodLabel: pv.periodLabel,
     tiles: {
       work: fmtHM(pv.totalHrs),
-      paidAbs: '0:00',
       totalPaid: fmtHM(pv.totalHrs),
-      regular: fmtHM(pv.regular),
-      overtime: pv.overtime > 0 ? '+' + fmtHM(pv.overtime) : '0:00',
       target: fmtHM(pv.target),
     },
     rows: pv.rows.map(r => ({
@@ -2155,7 +2148,7 @@ function timesheetPrintHTML(o) {
   .who .nm { font-size:18px; font-weight:800; }
   .who .rl { font-size:12.5px; color:#667; margin-top:2px; }
   .period { font-size:13px; font-weight:700; color:#3D5BA6; margin:2px 0 16px; }
-  .tiles { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; margin-bottom:20px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:8px; margin-bottom:20px; }
   .tile { border:1px solid #e4e7ee; border-radius:10px; padding:12px 10px; text-align:center; }
   .tile.big { background:#EEF2FB; border-color:#c9d6f0; }
   .tv { font-size:19px; font-weight:800; }
@@ -2185,11 +2178,9 @@ function timesheetPrintHTML(o) {
   <div class="period">Pay period: ${esc(o.periodLabel)}</div>
   <div class="tiles">
     ${tileHtml('Work hours', t.work || '0:00', '#1FA463')}
-    ${tileHtml('Paid absences', t.paidAbs || '0:00', '#B7791F')}
     ${tileHtml('Total paid', t.totalPaid || '0:00', '#3D5BA6', true)}
-    ${tileHtml('Regular', t.regular || '0:00', '#2F8FB3')}
-    ${tileHtml('Overtime', t.overtime || '0:00', '#6B7280')}
-    ${tileHtml(t.unpaidAbs != null ? 'Unpaid absences' : 'Target', t.unpaidAbs != null ? t.unpaidAbs : (t.target || '0:00'), '#6B7280')}
+    ${tileHtml('Target', t.target || '0:00', '#6B7280')}
+    ${t.unpaidAbs != null ? tileHtml('Unpaid absences', t.unpaidAbs, '#B7791F') : ''}
   </div>
   <table>
     <thead><tr><th>Day</th><th>Date</th><th class="c">Clock in</th><th class="c">Clock out</th><th class="c">Total hours</th></tr></thead>
