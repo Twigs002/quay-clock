@@ -1555,7 +1555,8 @@ function renderTsDetail() {
       </div>
       <div class="modal-foot">
         <button class="btn" id="tsDetailEdit">${icon('clipboard', 15)} Edit events</button>
-        <button class="btn primary" id="tsDetailExport">${icon('download', 15)} Export CSV</button>
+        <button class="btn" id="tsDetailExport">${icon('download', 15)} CSV</button>
+        <button class="btn primary" id="tsDetailPdf">${icon('download', 15)} PDF</button>
       </div>
     </div>`;
 }
@@ -1570,6 +1571,7 @@ function wireTsDetail() {
     openEventEditor(d.agentId, d.agentName);
   });
   document.getElementById('tsDetailExport').addEventListener('click', exportTsDetailCSV);
+  document.getElementById('tsDetailPdf').addEventListener('click', exportTsDetailPDF);
 }
 
 function exportTsDetailCSV() {
@@ -1602,6 +1604,197 @@ function exportTsDetailCSV() {
   });
   const safeId = d.agentId.replace(/[^a-z0-9_-]+/gi, '-');
   downloadCSV(`timesheet-${safeId}-${period}.csv`, rows);
+}
+
+// Working-day target for a range: weekdays (Mon-Fri) × 9h, minus SA public
+// holidays on a weekday (unpaid, excluded — matches payroll + staff app).
+function weekdayTargetHours(from, to, holSet) {
+  let weekdays = 0;
+  const cur = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  const stop = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+  while (cur <= stop) {
+    const dow = cur.getDay();
+    if (dow >= 1 && dow <= 5 && !holSet.has(sastYmd(cur))) weekdays++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return weekdays * 9;
+}
+
+// Per-person pay-period PDF (Connecteam-style) for the currently open detail
+// modal + selected period. Builds a day-by-day table with absence rows and
+// headline tiles, then opens a print window (Save-as-PDF).
+function exportTsDetailPDF() {
+  const d = state.tsDetail; if (!d) return;
+  const period = state.tsPeriod || 'this-week';
+  const range = periodRange(period, state.tsCustomFrom, state.tsCustomTo);
+  const events = (state.data.tsEvents || []).filter(e => e.id === d.agentId)
+    .filter(e => { const t = new Date(e.ts).getTime(); return t >= range.from && t <= range.to; })
+    .sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  // Pair IN→OUT, bucket by SAST day: earliest in, latest out, summed hours.
+  const perDay = {};
+  let openIn = null;
+  events.forEach(e => {
+    if (e.action === 'in') { openIn = e; return; }
+    if (e.action !== 'out') return;
+    const inDate = openIn ? new Date(openIn.ts) : null;
+    const outDate = new Date(e.ts);
+    const hrs = inDate
+      ? Math.max(0, (outDate - inDate) / 3.6e6)
+      : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
+    const key = sastYmd(inDate || outDate);
+    const rec = perDay[key] || (perDay[key] = { in: null, out: null, hrs: 0 });
+    if (inDate && (!rec.in || inDate < rec.in)) rec.in = inDate;
+    if (!rec.out || outDate > rec.out) rec.out = outDate;
+    rec.hrs += hrs;
+    openIn = null;
+  });
+  // Absences for this agent in range → map of dayKey → reason.
+  const absByDay = {};
+  (state.data.tsAbsences || []).forEach(a => {
+    if (a.staff_id !== d.agentId) return;
+    const t = new Date(a.date + 'T12:00:00').getTime();
+    if (t >= range.from && t <= range.to) absByDay[a.date] = a.reason || 'Absent';
+  });
+  const holSet = new Set([...(state.data.publicHolidays || new Map()).keys()]);
+  let total = 0; Object.values(perDay).forEach(r => { total += r.hrs; });
+  const target = weekdayTargetHours(new Date(range.from), new Date(range.to), holSet);
+  const overtime = Math.max(0, total - target);
+  const regular = total - overtime;
+  // Rows: every day in range up to today (future days omitted). Weekends
+  // shown only if worked or flagged absent.
+  const now = Date.now();
+  const stopMs = Math.min(range.to, now);
+  const rows = [];
+  const cur = new Date(new Date(range.from).getFullYear(), new Date(range.from).getMonth(), new Date(range.from).getDate());
+  while (cur.getTime() <= stopMs) {
+    const key = sastYmd(cur);
+    const rec = perDay[key];
+    const absent = !rec && absByDay[key];
+    const dow = cur.getDay();
+    const isWeekend = dow === 0 || dow === 6;
+    const isHoliday = holSet.has(key);
+    if (rec || absent || !isWeekend) {
+      rows.push({
+        dayLabel: cur.toLocaleDateString('en-GB', { weekday: 'short' }),
+        dateLabel: `${cur.getDate()}/${cur.getMonth() + 1}`,
+        tin: rec && rec.in ? fmtTimeOf(rec.in) : '—',
+        tout: rec && rec.out ? fmtTimeOf(rec.out) : '—',
+        hrs: rec ? fmtHM(rec.hrs) : '—',
+        holiday: isHoliday,
+        absent: !!absent,
+        absentReason: absent || '',
+      });
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  const absCount = Object.keys(absByDay).length;
+  openTimesheetPrint({
+    name: d.agentName,
+    role: (state.data.roster || []).find(r => r.id === d.agentId)?.role || '',
+    periodLabel: periodLabel(period, range),
+    tiles: {
+      work: fmtHM(total),
+      paidAbs: '0:00',
+      totalPaid: fmtHM(total),
+      regular: fmtHM(regular),
+      overtime: overtime > 0 ? '+' + fmtHM(overtime) : '0:00',
+      unpaidAbs: `${absCount} day${absCount === 1 ? '' : 's'}`,
+    },
+    rows,
+  });
+}
+
+// Shared: open a Quay-branded, print-optimised timesheet in a new window and
+// invoke print (Save-as-PDF). Self-contained HTML with inline CSS.
+function openTimesheetPrint(opts) {
+  const html = timesheetPrintHTML(opts);
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to save the PDF'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  w.onload = () => setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 250);
+}
+
+function timesheetPrintHTML(o) {
+  const esc = escapeHtml;
+  const genTime = new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const tileHtml = (label, val, color, big) => `
+    <div class="tile${big ? ' big' : ''}">
+      <div class="tv" style="color:${color}">${esc(val)}</div>
+      <div class="tl">${esc(label)}</div>
+    </div>`;
+  const rowsHtml = (o.rows || []).map(r => {
+    if (r.absent) {
+      return `<tr class="abs"><td>${esc(r.dayLabel)}</td><td>${esc(r.dateLabel)}</td>
+        <td colspan="3" class="c">Absent · ${esc(r.absentReason || 'Absent')}</td></tr>`;
+    }
+    return `<tr${r.holiday ? ' class="hol"' : ''}>
+      <td>${esc(r.dayLabel)}${r.holiday ? ' 🇿🇦' : ''}</td>
+      <td>${esc(r.dateLabel)}</td>
+      <td class="c">${esc(r.tin)}</td>
+      <td class="c">${esc(r.tout)}</td>
+      <td class="c b">${esc(r.hrs)}</td>
+    </tr>`;
+  }).join('');
+  const t = o.tiles || {};
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timesheet — ${esc(o.name)} — ${esc(o.periodLabel)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:#1a1a2e; margin:0; padding:26px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .wm { display:flex; align-items:center; gap:10px; }
+  .logo { font-weight:800; font-size:20px; letter-spacing:.5px; color:#3D5BA6; }
+  .logo b { color:#FDC503; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #3D5BA6; padding-bottom:14px; margin-bottom:18px; }
+  .who { text-align:right; }
+  .who .nm { font-size:18px; font-weight:800; }
+  .who .rl { font-size:12.5px; color:#667; margin-top:2px; }
+  .period { font-size:13px; font-weight:700; color:#3D5BA6; margin:2px 0 16px; }
+  .tiles { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; margin-bottom:20px; }
+  .tile { border:1px solid #e4e7ee; border-radius:10px; padding:12px 10px; text-align:center; }
+  .tile.big { background:#EEF2FB; border-color:#c9d6f0; }
+  .tv { font-size:19px; font-weight:800; }
+  .tl { font-size:10.5px; color:#667; margin-top:4px; text-transform:uppercase; letter-spacing:.4px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  thead th { background:#3D5BA6; color:#fff; text-align:left; padding:9px 10px; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+  thead th.c, tbody td.c { text-align:center; }
+  tbody td { padding:8px 10px; border-bottom:1px solid #eef0f4; }
+  tbody tr:nth-child(even) td { background:#fafbfd; }
+  tbody td.b { font-weight:700; }
+  tr.hol td { background:#EEF2FB !important; }
+  tr.abs td { color:#8a5a00; background:#FFF8EC !important; font-weight:600; }
+  .foot { margin-top:18px; font-size:11px; color:#889; display:flex; justify-content:space-between; }
+  @media print { body { padding:0; } @page { margin:14mm; } }
+</style></head>
+<body>
+  <div class="head">
+    <div>
+      <div class="wm"><span class="logo">QUAY <b>1</b></span></div>
+      <div style="font-size:12px;color:#667;margin-top:6px">Timesheet</div>
+    </div>
+    <div class="who">
+      <div class="nm">${esc(o.name)}</div>
+      ${o.role ? `<div class="rl">${esc(o.role)}</div>` : ''}
+    </div>
+  </div>
+  <div class="period">Pay period: ${esc(o.periodLabel)}</div>
+  <div class="tiles">
+    ${tileHtml('Work hours', t.work || '0:00', '#1FA463')}
+    ${tileHtml('Paid absences', t.paidAbs || '0:00', '#B7791F')}
+    ${tileHtml('Total paid', t.totalPaid || '0:00', '#3D5BA6', true)}
+    ${tileHtml('Regular', t.regular || '0:00', '#2F8FB3')}
+    ${tileHtml('Overtime', t.overtime || '0:00', '#6B7280')}
+    ${tileHtml(t.unpaidAbs != null ? 'Unpaid absences' : 'Target', t.unpaidAbs != null ? t.unpaidAbs : (t.target || '0:00'), '#6B7280')}
+  </div>
+  <table>
+    <thead><tr><th>Day</th><th>Date</th><th class="c">Clock in</th><th class="c">Clock out</th><th class="c">Total hours</th></tr></thead>
+    <tbody>${rowsHtml || `<tr><td colspan="5" class="c" style="padding:24px;color:#889">No shifts this period.</td></tr>`}</tbody>
+  </table>
+  <div class="foot">
+    <span>Quay 1 · Generated ${esc(genTime)}</span>
+    <span>Total ${esc(t.totalPaid || '0:00')}</span>
+  </div>
+</body></html>`;
 }
 
 function fmtTimeOf(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }

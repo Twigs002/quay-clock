@@ -544,6 +544,45 @@ h1, h2, h3 { margin: 0; font-weight: 800; color: var(--ink); }
   font-size: 11.5px; font-weight: 700;
 }
 .exp-btn:active { background: rgba(255,255,255,0.28); }
+.exp-btn.ghost { background: rgba(255,255,255,0.10); }
+
+/* Timesheet period selector (This week / This period / Last period) */
+.ts-period-bar {
+  display: flex; gap: 6px; padding: 10px 16px 0;
+}
+.ts-seg {
+  flex: 1; padding: 8px 4px; border-radius: 10px;
+  background: var(--blueSoft); color: var(--blue);
+  font-size: 12.5px; font-weight: 700; border: 1px solid transparent;
+  cursor: pointer;
+}
+.ts-seg.on { background: var(--blue); color: #fff; }
+
+/* Pay-period summary tiles */
+.ts-tiles {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin-bottom: 4px;
+}
+.ts-tile {
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 8px; text-align: center;
+}
+.ts-tile-val { font-size: 18px; font-weight: 800; }
+.ts-tile-lbl {
+  font-size: 10.5px; color: var(--muted); margin-top: 4px;
+  text-transform: uppercase; letter-spacing: .3px;
+}
+
+/* Pay-period day-by-day table */
+.ts-ptable-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--line); }
+.ts-ptable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ts-ptable thead th {
+  background: var(--blueSoft); color: var(--blue);
+  text-align: left; padding: 9px 12px; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .3px;
+}
+.ts-ptable th.ctr, .ts-ptable td.ctr { text-align: center; }
+.ts-ptable tbody td { padding: 8px 12px; border-top: 1px solid var(--line); }
 
 /* sign-out tile at bottom of Team */
 .signout {

@@ -34,6 +34,7 @@ const state = {
   // tab data caches
   home: null,            // { status, lastIn, lastNote, todayHrs, weekHrs, weekTarget }
   timesheet: null,       // { weekBars, entries, totalHrs, target }
+  tsPeriod: 'this-week', // this-week | this-cycle | last-cycle
   leave: null,           // { balances, requests }
   team: null,            // [ { id, name, role, status, cin, loc, note } ]
   // UI flags
@@ -280,8 +281,31 @@ async function maybeShowNotice(trigger) {
     }
   } catch {}
 }
+// The pay cycle immediately before the one containing `d`.
+function prevCycle(d) {
+  const cur = payCycleFor(d);
+  const before = new Date(cur.from); before.setDate(before.getDate() - 1);
+  return payCycleFor(before);
+}
+// Working-day target for a range: weekdays (Mon-Fri) × 9h, minus SA public
+// holidays that land on a weekday (unpaid, excluded — matches buildMonthSummary
+// and payroll). `holSet` holds effective (observed) YYYY-MM-DD holiday dates.
+function weekdayTargetHours(from, to, holSet) {
+  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  let weekdays = 0;
+  const cur = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  const stop = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+  while (cur <= stop) {
+    const dow = cur.getDay();
+    if (dow >= 1 && dow <= 5 && !holSet.has(ymd(cur))) weekdays++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return weekdays * 9;
+}
+
 async function loadTimesheet() {
   const now = new Date();
+  const period = state.tsPeriod || 'this-week';
   const wFrom = startOfWeek(now).toISOString();
   const wTo   = endOfWeek(now).toISOString();
   // Cycle-to-date covers the FULL current pay cycle (21st → 20th) so the
@@ -289,16 +313,95 @@ async function loadTimesheet() {
   const cyc = payCycleFor(now);
   const mFrom = cyc.from.toISOString();
   const mTo   = cyc.to.toISOString();
-  const [weekData, monthData, holData] = await Promise.all([
+  // For "last period" we need the previous cycle's events too — fetched only
+  // when that view is selected so the common case stays two requests.
+  const selCyc = period === 'last-cycle' ? prevCycle(now) : cyc;
+  const needSel = period === 'last-cycle';
+  const reqs = [
     api('events', { agent_id: state.agent.id, from: wFrom, to: wTo }),
     api('events', { agent_id: state.agent.id, from: mFrom, to: mTo }),
     // Public holidays for the cycle — used to exclude non-working holiday
     // days from the monthly target. Non-fatal: fall back to none on error.
     api('public_holidays', {}).catch(() => ({ holidays: [] })),
-  ]);
+  ];
+  if (needSel) reqs.push(api('events', { agent_id: state.agent.id, from: selCyc.from.toISOString(), to: selCyc.to.toISOString() }));
+  const [weekData, monthData, holData, selData] = await Promise.all(reqs);
   state.timesheet = buildTimesheet(weekData.events, now);
   state.timesheet.monthSummary = buildMonthSummary(monthData.events, now, holData.holidays || []);
   state.timesheet.cycleWeeks = buildCycleWeeks(monthData.events, now);
+  // Full pay-period view (tiles + day-by-day table + PDF) for the selected
+  // cycle. Reuses the already-fetched current-cycle events when possible.
+  const cycEvents = needSel ? (selData.events || []) : (monthData.events || []);
+  state.timesheet.periodView = buildPeriodView(cycEvents, selCyc, holData.holidays || [], period, now);
+}
+
+// Build the per-person pay-period summary: 6 headline tiles + one row per
+// calendar day across the cycle (Connecteam-style), for PDF export + the
+// "This / Last period" tab views. Hours attributed to the OUT day.
+function buildPeriodView(events, cyc, holidays, period, now) {
+  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const perDay = {}; // ymd -> { in: earliest Date, out: latest Date, hrs, shifts }
+  let openIn = null;
+  const sorted = (events || []).slice().sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+  sorted.forEach(e => {
+    if (e.action === 'in') { openIn = e; return; }
+    if (e.action !== 'out') return;
+    const inDate = openIn ? new Date(openIn.ts) : null;
+    const outDate = new Date(e.ts);
+    const hrs = inDate
+      ? Math.max(0, (outDate - inDate) / 3.6e6)
+      : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
+    const key = ymd(outDate);
+    const rec = perDay[key] || (perDay[key] = { in: null, out: null, hrs: 0, shifts: 0 });
+    if (inDate && (!rec.in || inDate < rec.in)) rec.in = inDate;
+    if (!rec.out || outDate > rec.out) rec.out = outDate;
+    rec.hrs += hrs;
+    rec.shifts += 1;
+    openIn = null;
+  });
+  let total = 0;
+  Object.values(perDay).forEach(r => { total += r.hrs; });
+  const holSet = new Set((holidays || []).map(h => h.date));
+  const target = weekdayTargetHours(cyc.from, cyc.to, holSet);
+  const overtime = Math.max(0, total - target);
+  const regular = total - overtime;
+  // Rows: every calendar day in the cycle up to today (current) or the whole
+  // cycle (past). Weekdays with no shift render as "—"; weekends are skipped
+  // unless worked, matching how staff read Connecteam timesheets.
+  // Past cycle → whole cycle; current cycle (this-week/this-cycle) → cap at today.
+  const stop = period === 'last-cycle' ? cyc.to : (now < cyc.to ? now : cyc.to);
+  const stopKey = ymd(stop);
+  const rows = [];
+  const cur = new Date(cyc.from.getFullYear(), cyc.from.getMonth(), cyc.from.getDate());
+  while (ymd(cur) <= stopKey) {
+    const key = ymd(cur);
+    const rec = perDay[key];
+    const dow = cur.getDay();
+    const isWeekend = dow === 0 || dow === 6;
+    const isHoliday = holSet.has(key);
+    if (rec || !isWeekend) {
+      rows.push({
+        dayLabel: cur.toLocaleDateString('en-GB', { weekday: 'short' }),
+        dateLabel: `${cur.getDate()}/${cur.getMonth() + 1}`,
+        tin: rec && rec.in ? fmtTime(rec.in.toISOString()) : '—',
+        tout: rec && rec.out ? fmtTime(rec.out.toISOString()) : '—',
+        hrs: rec ? fmtHM(rec.hrs) : '—',
+        hrsNum: rec ? rec.hrs : 0,
+        holiday: isHoliday,
+        weekend: isWeekend,
+      });
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  const f = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return {
+    period,
+    periodLabel: `${f(cyc.from)} – ${f(cyc.to)} ${cyc.to.getFullYear()}`,
+    from: cyc.from, to: cyc.to,
+    totalHrs: total, target, regular, overtime,
+    workedDays: Object.keys(perDay).length,
+    rows,
+  };
 }
 
 function buildMonthSummary(events, now, holidays = []) {
@@ -1725,14 +1828,27 @@ async function submitRequest() {
 }
 
 // ───── TIMESHEET ─────────────────────────────────────────────────────
+const TS_PERIODS = [['this-week','This week'],['this-cycle','This period'],['last-cycle','Last period']];
+function tsPeriodBar() {
+  const cur = state.tsPeriod || 'this-week';
+  return `<div class="ts-period-bar">
+    ${TS_PERIODS.map(([k, l]) =>
+      `<button class="ts-seg ${k === cur ? 'on' : ''}" data-ts-period="${k}">${l}</button>`).join('')}
+  </div>`;
+}
+
 function renderTimesheet() {
   const ts = state.timesheet;
+  const period = state.tsPeriod || 'this-week';
+  const isCycle = period !== 'this-week';
   const head = renderHeader({
     title: 'Timesheet',
-    sub: ts ? weekLabel(ts.weekStart) : '',
-    action: `<button class="exp-btn" id="tsExport">${icon('download', 14, '#fff', 2)} CSV</button>`,
+    sub: ts ? (isCycle && ts.periodView ? ts.periodView.periodLabel : weekLabel(ts.weekStart)) : '',
+    action: `<button class="exp-btn" id="tsPdf">${icon('download', 14, '#fff', 2)} PDF</button>
+             <button class="exp-btn ghost" id="tsExport">CSV</button>`,
   });
-  if (!ts) return head + (state.loading ? '<div class="loading">Loading…</div>' : '<div class="loading">No data yet</div>');
+  if (!ts) return head + tsPeriodBar() + (state.loading ? '<div class="loading">Loading…</div>' : '<div class="loading">No data yet</div>');
+  if (isCycle) return head + tsPeriodBar() + renderTimesheetPeriod(ts.periodView);
   const overtime = ts.totalHrs - ts.target;
   const otTxt = overtime > 0 ? `+${fmtHM(overtime)} overtime` : `${fmtHM(ts.target - ts.totalHrs)} to go`;
 
@@ -1779,6 +1895,7 @@ function renderTimesheet() {
       </div>` : '';
 
   return `${head}
+    ${tsPeriodBar()}
     <div class="content tight">
       <div class="card pad">
         <div class="between">
@@ -1824,9 +1941,66 @@ function renderTimesheet() {
   `;
 }
 
+// Pay-period view: 6 headline tiles + day-by-day table. Shown for the
+// "This period" / "Last period" tabs; also the source for the PDF.
+function renderTimesheetPeriod(pv) {
+  if (!pv) return state.loading ? '<div class="loading">Loading…</div>' : '<div class="loading">No data yet</div>';
+  const tile = (label, value, color) => `
+    <div class="ts-tile">
+      <div class="ts-tile-val" style="color:${color}">${escapeHtml(value)}</div>
+      <div class="ts-tile-lbl">${escapeHtml(label)}</div>
+    </div>`;
+  const tiles = `
+    <div class="ts-tiles">
+      ${tile('Work hours', fmtHM(pv.totalHrs), '#1FA463')}
+      ${tile('Paid absences', '0:00', '#B7791F')}
+      ${tile('Total paid', fmtHM(pv.totalHrs), '#3D5BA6')}
+      ${tile('Regular', fmtHM(pv.regular), '#2F8FB3')}
+      ${tile('Overtime', pv.overtime > 0 ? '+' + fmtHM(pv.overtime) : '0:00', '#6B7280')}
+      ${tile('Target', fmtHM(pv.target), '#6B7280')}
+    </div>`;
+  const rowsHtml = pv.rows.length === 0
+    ? `<div class="card pad-sm" style="text-align:center;color:var(--muted)">No shifts this period.</div>`
+    : `<div class="ts-ptable-wrap">
+        <table class="ts-ptable">
+          <thead><tr><th>Day</th><th>Date</th><th class="ctr">In</th><th class="ctr">Out</th><th class="ctr">Hours</th></tr></thead>
+          <tbody>
+            ${pv.rows.map(r => `
+              <tr${r.holiday ? ' style="background:var(--skySoft)"' : ''}>
+                <td>${r.dayLabel}${r.holiday ? ' 🇿🇦' : ''}</td>
+                <td>${r.dateLabel}</td>
+                <td class="ctr tnum">${r.tin}</td>
+                <td class="ctr tnum">${r.tout}</td>
+                <td class="ctr tnum" style="font-weight:700">${r.hrs}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  return `
+    <div class="content tight">
+      ${tiles}
+      <div class="section-title">Daily breakdown</div>
+      ${rowsHtml}
+      <div style="margin-top:14px;color:var(--muted);font-size:12px;text-align:center">
+        Worked ${pv.workedDays} day${pv.workedDays === 1 ? '' : 's'} · Tap <b>PDF</b> above to save or share this timesheet.
+      </div>
+    </div>`;
+}
+
 function wireTimesheet() {
   const btn = document.getElementById('tsExport');
   if (btn) btn.addEventListener('click', exportTimesheetCSV);
+  const pdf = document.getElementById('tsPdf');
+  if (pdf) pdf.addEventListener('click', exportTimesheetPDF);
+  document.querySelectorAll('button[data-ts-period]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const p = b.dataset.tsPeriod;
+      if (p === state.tsPeriod) return;
+      state.tsPeriod = p;
+      state.loading = true; render();
+      try { await loadTimesheet(); } catch (e) { state.error = e.message; }
+      state.loading = false; render();
+    }));
 }
 function weekLabel(d) {
   const s = startOfWeek(d); const e = endOfWeek(d);
@@ -1840,12 +2014,145 @@ function weekLabel(d) {
 function exportTimesheetCSV() {
   const ts = state.timesheet;
   if (!ts) return;
+  const safeId = String(state.agent.id || 'me').replace(/[^a-z0-9_-]+/gi, '-');
+  const pv = (state.tsPeriod !== 'this-week') ? ts.periodView : null;
+  if (pv) {
+    const rows = [['Day','Date','Clock In','Clock Out','Hours']];
+    pv.rows.forEach(r => rows.push([r.dayLabel, r.dateLabel, r.tin, r.tout, r.hrs]));
+    rows.push([]);
+    rows.push(['Total', '', '', '', fmtHM(pv.totalHrs)]);
+    rows.push(['Target', '', '', '', fmtHM(pv.target)]);
+    rows.push(['Overtime', '', '', '', pv.overtime > 0 ? fmtHM(pv.overtime) : '0:00']);
+    downloadCSV(`timesheet-${safeId}-${pv.from.toISOString().slice(0,10)}.csv`, rows);
+    return;
+  }
   const rows = [['Day','Date','Clock In','Clock Out','Hours','Note','Location']];
   ts.entries.forEach(e => rows.push([e.day, `${e.date} ${e.monthShort || ''}`.trim(), e.tin, e.tout, e.hrs, e.note, e.loc]));
   rows.push([]);
   rows.push(['Total', '', '', '', fmtHM(ts.totalHrs), `target ${ts.target}h`, '']);
-  const safeId = String(state.agent.id || 'me').replace(/[^a-z0-9_-]+/gi, '-');
   downloadCSV(`timesheet-${safeId}-${ts.weekStart.toISOString().slice(0,10)}.csv`, rows);
+}
+
+// PDF via a styled print window (Save-as-PDF). Always exports the FULL pay
+// period so the document matches what payroll queries need, regardless of
+// which tab is open. periodView is built for the current cycle on every load.
+function exportTimesheetPDF() {
+  const ts = state.timesheet;
+  if (!ts || !ts.periodView) { showToast('Timesheet still loading…'); return; }
+  const pv = ts.periodView;
+  openTimesheetPrint({
+    name: state.agent.name || 'Staff',
+    role: state.agent.role || '',
+    periodLabel: pv.periodLabel,
+    tiles: {
+      work: fmtHM(pv.totalHrs),
+      paidAbs: '0:00',
+      totalPaid: fmtHM(pv.totalHrs),
+      regular: fmtHM(pv.regular),
+      overtime: pv.overtime > 0 ? '+' + fmtHM(pv.overtime) : '0:00',
+      target: fmtHM(pv.target),
+    },
+    rows: pv.rows.map(r => ({
+      dayLabel: r.dayLabel, dateLabel: r.dateLabel,
+      tin: r.tin, tout: r.tout, hrs: r.hrs,
+      holiday: r.holiday, absent: false, note: r.holiday ? 'Public holiday' : '',
+    })),
+  });
+}
+
+// Shared: open a print-optimised, Quay-branded timesheet in a new window and
+// invoke the browser's print dialog (which offers "Save as PDF"). Self-
+// contained HTML with inline CSS so it works from about:blank on mobile too.
+function openTimesheetPrint(opts) {
+  const html = timesheetPrintHTML(opts);
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to save the PDF'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  // Give the layout a tick to settle before the print dialog appears.
+  w.onload = () => setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 250);
+}
+
+function timesheetPrintHTML(o) {
+  const esc = escapeHtml;
+  const genTime = new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const tileHtml = (label, val, color, big) => `
+    <div class="tile${big ? ' big' : ''}">
+      <div class="tv" style="color:${color}">${esc(val)}</div>
+      <div class="tl">${esc(label)}</div>
+    </div>`;
+  const rowsHtml = (o.rows || []).map(r => {
+    if (r.absent) {
+      return `<tr class="abs"><td>${esc(r.dayLabel)}</td><td>${esc(r.dateLabel)}</td>
+        <td colspan="3" class="c">Absent · ${esc(r.absentReason || 'Absent')}</td></tr>`;
+    }
+    return `<tr${r.holiday ? ' class="hol"' : ''}>
+      <td>${esc(r.dayLabel)}${r.holiday ? ' 🇿🇦' : ''}</td>
+      <td>${esc(r.dateLabel)}</td>
+      <td class="c">${esc(r.tin)}</td>
+      <td class="c">${esc(r.tout)}</td>
+      <td class="c b">${esc(r.hrs)}</td>
+    </tr>`;
+  }).join('');
+  const t = o.tiles || {};
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timesheet — ${esc(o.name)} — ${esc(o.periodLabel)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:#1a1a2e; margin:0; padding:26px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .wm { display:flex; align-items:center; gap:10px; }
+  .logo { font-weight:800; font-size:20px; letter-spacing:.5px; color:#3D5BA6; }
+  .logo b { color:#FDC503; }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #3D5BA6; padding-bottom:14px; margin-bottom:18px; }
+  .who { text-align:right; }
+  .who .nm { font-size:18px; font-weight:800; }
+  .who .rl { font-size:12.5px; color:#667; margin-top:2px; }
+  .period { font-size:13px; font-weight:700; color:#3D5BA6; margin:2px 0 16px; }
+  .tiles { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; margin-bottom:20px; }
+  .tile { border:1px solid #e4e7ee; border-radius:10px; padding:12px 10px; text-align:center; }
+  .tile.big { background:#EEF2FB; border-color:#c9d6f0; }
+  .tv { font-size:19px; font-weight:800; }
+  .tl { font-size:10.5px; color:#667; margin-top:4px; text-transform:uppercase; letter-spacing:.4px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  thead th { background:#3D5BA6; color:#fff; text-align:left; padding:9px 10px; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+  thead th.c, tbody td.c { text-align:center; }
+  tbody td { padding:8px 10px; border-bottom:1px solid #eef0f4; }
+  tbody tr:nth-child(even) td { background:#fafbfd; }
+  tbody td.b { font-weight:700; }
+  tr.hol td { background:#EEF2FB !important; }
+  tr.abs td { color:#8a5a00; background:#FFF8EC !important; font-weight:600; }
+  .foot { margin-top:18px; font-size:11px; color:#889; display:flex; justify-content:space-between; }
+  @media print { body { padding:0; } @page { margin:14mm; } }
+</style></head>
+<body>
+  <div class="head">
+    <div>
+      <div class="wm"><span class="logo">QUAY <b>1</b></span></div>
+      <div style="font-size:12px;color:#667;margin-top:6px">Timesheet</div>
+    </div>
+    <div class="who">
+      <div class="nm">${esc(o.name)}</div>
+      ${o.role ? `<div class="rl">${esc(o.role)}</div>` : ''}
+    </div>
+  </div>
+  <div class="period">Pay period: ${esc(o.periodLabel)}</div>
+  <div class="tiles">
+    ${tileHtml('Work hours', t.work || '0:00', '#1FA463')}
+    ${tileHtml('Paid absences', t.paidAbs || '0:00', '#B7791F')}
+    ${tileHtml('Total paid', t.totalPaid || '0:00', '#3D5BA6', true)}
+    ${tileHtml('Regular', t.regular || '0:00', '#2F8FB3')}
+    ${tileHtml('Overtime', t.overtime || '0:00', '#6B7280')}
+    ${tileHtml(t.unpaidAbs != null ? 'Unpaid absences' : 'Target', t.unpaidAbs != null ? t.unpaidAbs : (t.target || '0:00'), '#6B7280')}
+  </div>
+  <table>
+    <thead><tr><th>Day</th><th>Date</th><th class="c">Clock in</th><th class="c">Clock out</th><th class="c">Total hours</th></tr></thead>
+    <tbody>${rowsHtml || `<tr><td colspan="5" class="c" style="padding:24px;color:#889">No shifts this period.</td></tr>`}</tbody>
+  </table>
+  <div class="foot">
+    <span>Quay 1 · Generated ${esc(genTime)}</span>
+    <span>Total ${esc(t.totalPaid || '0:00')}</span>
+  </div>
+</body></html>`;
 }
 
 // ───── REQUESTS (leave + shift changes) ─────────────────────────────
