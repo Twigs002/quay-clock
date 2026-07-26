@@ -34,7 +34,8 @@ const state = {
   // tab data caches
   home: null,            // { status, lastIn, lastNote, todayHrs, weekHrs, weekTarget }
   timesheet: null,       // { weekBars, entries, totalHrs, target }
-  tsPeriod: 'this-week', // this-week | this-cycle | last-cycle
+  tsPeriod: 'this-week', // this-week | cycle
+  tsCycleOffset: 0,      // 0 = current billing cycle, -1 = previous, …
   leave: null,           // { balances, requests }
   team: null,            // [ { id, name, role, status, cin, loc, note } ]
   // UI flags
@@ -186,6 +187,8 @@ const ICON = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
   refresh: '<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16M3 21v-5h5"/>',
+  chevronL: '<path d="M15 5l-7 7 7 7"/>',
+  chevronR: '<path d="M9 5l7 7-7 7"/>',
 };
 function icon(name, size = 22, stroke = 'currentColor', sw = 1.8) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" style="display:block">${ICON[name] || ''}</svg>`;
@@ -287,6 +290,17 @@ function prevCycle(d) {
   const before = new Date(cur.from); before.setDate(before.getDate() - 1);
   return payCycleFor(before);
 }
+// The billing cycle `offset` months away from the one containing `now`.
+// offset 0 = current cycle, -1 = previous, -2 = two ago, … Staff can page
+// back through their whole history; never forward past the current cycle.
+function cycleForOffset(now, offset) {
+  let cyc = payCycleFor(now);
+  for (let i = 0; i < Math.abs(offset); i++) {
+    const before = new Date(cyc.from); before.setDate(before.getDate() - 1);
+    cyc = payCycleFor(before);
+  }
+  return cyc;
+}
 // Working-day target for a range: weekdays (Mon-Fri) × 9h, minus SA public
 // holidays that land on a weekday (unpaid, excluded — matches buildMonthSummary
 // and payroll). `holSet` holds effective (observed) YYYY-MM-DD holiday dates.
@@ -306,6 +320,7 @@ function weekdayTargetHours(from, to, holSet) {
 async function loadTimesheet() {
   const now = new Date();
   const period = state.tsPeriod || 'this-week';
+  const offset = state.tsCycleOffset || 0;
   const wFrom = startOfWeek(now).toISOString();
   const wTo   = endOfWeek(now).toISOString();
   // Cycle-to-date covers the FULL current pay cycle (21st → 20th) so the
@@ -313,10 +328,11 @@ async function loadTimesheet() {
   const cyc = payCycleFor(now);
   const mFrom = cyc.from.toISOString();
   const mTo   = cyc.to.toISOString();
-  // For "last period" we need the previous cycle's events too — fetched only
-  // when that view is selected so the common case stays two requests.
-  const selCyc = period === 'last-cycle' ? prevCycle(now) : cyc;
-  const needSel = period === 'last-cycle';
+  // Billing-period view can point at ANY past cycle via `offset`. Fetch the
+  // selected cycle's events only when it isn't the current one (which we
+  // already pull for the month summary), so the common case stays 3 requests.
+  const selCyc = (period === 'cycle') ? cycleForOffset(now, offset) : cyc;
+  const needSel = (period === 'cycle') && offset !== 0;
   const reqs = [
     api('events', { agent_id: state.agent.id, from: wFrom, to: wTo }),
     api('events', { agent_id: state.agent.id, from: mFrom, to: mTo }),
@@ -332,13 +348,14 @@ async function loadTimesheet() {
   // Full pay-period view (tiles + day-by-day table + PDF) for the selected
   // cycle. Reuses the already-fetched current-cycle events when possible.
   const cycEvents = needSel ? (selData.events || []) : (monthData.events || []);
-  state.timesheet.periodView = buildPeriodView(cycEvents, selCyc, holData.holidays || [], period, now);
+  const isCurrentCycle = !(period === 'cycle' && offset !== 0);
+  state.timesheet.periodView = buildPeriodView(cycEvents, selCyc, holData.holidays || [], isCurrentCycle, now);
 }
 
 // Build the per-person pay-period summary: 6 headline tiles + one row per
 // calendar day across the cycle (Connecteam-style), for PDF export + the
-// "This / Last period" tab views. Hours attributed to the OUT day.
-function buildPeriodView(events, cyc, holidays, period, now) {
+// billing-period tab view. Hours attributed to the OUT day.
+function buildPeriodView(events, cyc, holidays, isCurrentCycle, now) {
   const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const perDay = {}; // ymd -> { in: earliest Date, out: latest Date, hrs, shifts }
   let openIn = null;
@@ -368,8 +385,8 @@ function buildPeriodView(events, cyc, holidays, period, now) {
   // Rows: every calendar day in the cycle up to today (current) or the whole
   // cycle (past). Weekdays with no shift render as "—"; weekends are skipped
   // unless worked, matching how staff read Connecteam timesheets.
-  // Past cycle → whole cycle; current cycle (this-week/this-cycle) → cap at today.
-  const stop = period === 'last-cycle' ? cyc.to : (now < cyc.to ? now : cyc.to);
+  // Past cycle → whole cycle; current cycle → cap at today (no future rows).
+  const stop = isCurrentCycle ? (now < cyc.to ? now : cyc.to) : cyc.to;
   const stopKey = ymd(stop);
   const rows = [];
   const cur = new Date(cyc.from.getFullYear(), cyc.from.getMonth(), cyc.from.getDate());
@@ -395,7 +412,7 @@ function buildPeriodView(events, cyc, holidays, period, now) {
   }
   const f = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   return {
-    period,
+    isCurrentCycle,
     periodLabel: `${f(cyc.from)} – ${f(cyc.to)} ${cyc.to.getFullYear()}`,
     from: cyc.from, to: cyc.to,
     totalHrs: total, target, regular, overtime,
@@ -1828,7 +1845,7 @@ async function submitRequest() {
 }
 
 // ───── TIMESHEET ─────────────────────────────────────────────────────
-const TS_PERIODS = [['this-week','This week'],['this-cycle','This period'],['last-cycle','Last period']];
+const TS_PERIODS = [['this-week','This week'],['cycle','Billing period']];
 function tsPeriodBar() {
   const cur = state.tsPeriod || 'this-week';
   return `<div class="ts-period-bar">
@@ -1836,11 +1853,25 @@ function tsPeriodBar() {
       `<button class="ts-seg ${k === cur ? 'on' : ''}" data-ts-period="${k}">${l}</button>`).join('')}
   </div>`;
 }
+// ‹ prev · 21 Jun – 20 Jul 2026 · next › stepper for the billing-period view.
+// `next` is disabled on the current cycle (offset 0) — no future periods.
+function tsCycleStepper(pv) {
+  const offset = state.tsCycleOffset || 0;
+  const label = pv ? pv.periodLabel : '';
+  return `<div class="ts-cycle-nav">
+    <button class="ts-cyc-btn" data-ts-cycle="older" aria-label="Older period">${icon('chevronL', 18, 'currentColor', 2.2)}</button>
+    <div class="ts-cyc-lbl">
+      <div class="ts-cyc-eyebrow">Billing period</div>
+      <div class="ts-cyc-range">${escapeHtml(label)}</div>
+    </div>
+    <button class="ts-cyc-btn" data-ts-cycle="newer" aria-label="Newer period"${offset >= 0 ? ' disabled' : ''}>${icon('chevronR', 18, 'currentColor', 2.2)}</button>
+  </div>`;
+}
 
 function renderTimesheet() {
   const ts = state.timesheet;
   const period = state.tsPeriod || 'this-week';
-  const isCycle = period !== 'this-week';
+  const isCycle = period === 'cycle';
   const head = renderHeader({
     title: 'Timesheet',
     sub: ts ? (isCycle && ts.periodView ? ts.periodView.periodLabel : weekLabel(ts.weekStart)) : '',
@@ -1848,7 +1879,7 @@ function renderTimesheet() {
              <button class="exp-btn ghost" id="tsExport">CSV</button>`,
   });
   if (!ts) return head + tsPeriodBar() + (state.loading ? '<div class="loading">Loading…</div>' : '<div class="loading">No data yet</div>');
-  if (isCycle) return head + tsPeriodBar() + renderTimesheetPeriod(ts.periodView);
+  if (isCycle) return head + tsPeriodBar() + tsCycleStepper(ts.periodView) + renderTimesheetPeriod(ts.periodView);
   const overtime = ts.totalHrs - ts.target;
   const otTxt = overtime > 0 ? `+${fmtHM(overtime)} overtime` : `${fmtHM(ts.target - ts.totalHrs)} to go`;
 
@@ -1987,19 +2018,35 @@ function renderTimesheetPeriod(pv) {
     </div>`;
 }
 
+async function reloadTimesheet() {
+  state.loading = true; render();
+  try { await loadTimesheet(); } catch (e) { state.error = e.message; }
+  state.loading = false; render();
+}
 function wireTimesheet() {
   const btn = document.getElementById('tsExport');
   if (btn) btn.addEventListener('click', exportTimesheetCSV);
   const pdf = document.getElementById('tsPdf');
   if (pdf) pdf.addEventListener('click', exportTimesheetPDF);
   document.querySelectorAll('button[data-ts-period]').forEach(b =>
-    b.addEventListener('click', async () => {
+    b.addEventListener('click', () => {
       const p = b.dataset.tsPeriod;
       if (p === state.tsPeriod) return;
       state.tsPeriod = p;
-      state.loading = true; render();
-      try { await loadTimesheet(); } catch (e) { state.error = e.message; }
-      state.loading = false; render();
+      // Entering the billing-period view always starts on the current cycle.
+      if (p === 'cycle') state.tsCycleOffset = 0;
+      reloadTimesheet();
+    }));
+  // ‹ / › billing-period stepper. Older = one cycle back; newer = toward the
+  // current cycle (clamped at 0, disabled button prevents going future).
+  document.querySelectorAll('button[data-ts-cycle]').forEach(b =>
+    b.addEventListener('click', () => {
+      const dir = b.dataset.tsCycle;
+      const cur = state.tsCycleOffset || 0;
+      const next = dir === 'older' ? cur - 1 : Math.min(0, cur + 1);
+      if (next === cur) return;
+      state.tsCycleOffset = next;
+      reloadTimesheet();
     }));
 }
 function weekLabel(d) {
