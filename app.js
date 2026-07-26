@@ -2010,7 +2010,7 @@ function renderTimesheetPeriod(pv) {
       <div class="section-title">Daily breakdown</div>
       ${rowsHtml}
       <div style="margin-top:14px;color:var(--muted);font-size:12px;text-align:center">
-        Worked ${pv.workedDays} day${pv.workedDays === 1 ? '' : 's'} · Tap <b>PDF</b> above to save or share this timesheet.
+        Worked ${pv.workedDays} day${pv.workedDays === 1 ? '' : 's'} this period.
       </div>
     </div>`;
 }
