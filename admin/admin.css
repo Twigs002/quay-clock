@@ -636,7 +636,7 @@ td.reason-cell.details-open .reason-text {
 .ts-team-picker { position: relative; }
 .ts-team-btn {
   display: flex; align-items: center; justify-content: space-between; gap: 6px;
-  width: 168px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
+  width: 168px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
   background: #fff; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
   text-align: left; outline: none;
 }
@@ -647,7 +647,7 @@ td.reason-cell.details-open .reason-text {
 .ts-team-picker--flag .ts-team-btn { border-color: #B23434; background: #FFECEC; }
 .ts-team-picker--flag .ts-team-btn-label { color: #B23434; font-weight: 600; }
 .ts-team-menu {
-  position: absolute; top: calc(100% + 4px); left: 0; width: 260px;
+  position: absolute; top: calc(100% + 4px); left: 0; width: min(260px, calc(100vw - 28px));
   z-index: 9999; background: #fff; border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 12px 34px rgba(15,23,42,.18); padding: 8px; box-sizing: border-box;
 }
@@ -726,6 +726,9 @@ td.reason-cell.details-open .reason-text {
 @media (max-width: 720px) {
   .evrow, .evrow.add { grid-template-columns: 1fr 1fr; grid-auto-flow: row; }
   .evrow .ev-note { grid-column: 1 / -1; }
+  /* Add-timesheet-event row: stack to one column so the fixed 78/142/96px
+     columns can't blow past a 375px card. */
+  .ts-addrow { grid-template-columns: 1fr; }
 }
 
 /* ── misc ─────────────────────────────────────────────────────────── */
