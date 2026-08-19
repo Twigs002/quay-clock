@@ -398,6 +398,7 @@ const handlers = {
         hourly_rate:  s.hourly_rate  != null ? Number(s.hourly_rate)  : null,
         weekly_hours: s.weekly_hours != null ? Number(s.weekly_hours) : null,
         salary:       s.salary       != null ? Number(s.salary)       : null,
+        salary_type:  s.salary_type === 'fixed' ? 'fixed' : 'prorata',
         active: s.active !== false,
         status: st.status, lastIn: st.lastIn, lastOut: st.lastOut,
         lastNote: st.lastNote,
@@ -620,10 +621,20 @@ const handlers = {
         is_super: !!payload.super,
         designation: payload.designation ?? null,
         division:    payload.division    ?? null,
+        salary_type: payload.salary_type === 'fixed' ? 'fixed' : 'prorata',
       }),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.ok) return { ok: false, error: body.error || 'Could not create staff' };
+    // The admin-create-staff Edge Function may not persist salary_type (it
+    // predates the column). Set it in a follow-up PATCH — RLS allows an admin
+    // to update staff rows. Non-fatal: a new row already defaults to 'prorata'.
+    const newId = (body.staff && body.staff.id) || payload.id;
+    if (newId && payload.salary_type === 'fixed') {
+      const { error: stErr } = await sb.from('staff')
+        .update({ salary_type: 'fixed' }).eq('id', String(newId).toLowerCase());
+      if (stErr) console.warn('Staff created, but salary type could not be set:', stErr.message);
+    }
     return { ok: true, agent: body.staff };
   },
 
@@ -732,6 +743,8 @@ const handlers = {
       patch.salary = (payload.salary === '' || payload.salary == null) ? null : Number(payload.salary);
     if (payload.designation !== undefined) patch.designation = payload.designation || null;
     if (payload.division !== undefined)    patch.division    = payload.division || null;
+    if (payload.salary_type !== undefined)
+      patch.salary_type = payload.salary_type === 'fixed' ? 'fixed' : 'prorata';
     if (Object.keys(patch).length) {
       const { error } = await sb.from('staff').update(patch).eq('id', id);
       if (error) return { ok: false, error: error.message };

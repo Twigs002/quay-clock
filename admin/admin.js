@@ -2838,6 +2838,7 @@ function wireTeam() {
   if (btn) btn.addEventListener('click', () => {
     state.staffModal = { mode: 'add', name: '', id: '', role: '', team: '', pin: '',
                         admin: false, super: false, hourly_rate: '', weekly_hours: '', salary: '',
+                        salary_type: 'prorata',
                         designation: 'fancy', division: '',
                         error: '', busy: false };
     render();
@@ -2853,6 +2854,7 @@ function wireTeam() {
       hourly_rate: s.hourly_rate != null ? String(s.hourly_rate) : '',
       weekly_hours: s.weekly_hours != null ? String(s.weekly_hours) : '',
       salary: s.salary != null ? String(s.salary) : '',
+      salary_type: s.salary_type === 'fixed' ? 'fixed' : 'prorata',
       designation: s.designation || '',
       division: s.division || '',
       active: s.active !== false, error: '', busy: false,
@@ -2928,10 +2930,19 @@ function renderStaffModal() {
             <input id="sfTeam" type="text" value="${escapeHtml(f.team)}" placeholder="Sales">
           </label>
         </div>
-        <label class="field"><span>Monthly salary (R)</span>
-          <input id="sfSalary" type="number" step="0.01" min="0" value="${escapeHtml(f.salary)}" placeholder="e.g. 12000.00">
-          <div class="hint">Admin-only. Shown on the Team list.</div>
-        </label>
+        <div class="field-row">
+          <label class="field"><span>Monthly salary (R)</span>
+            <input id="sfSalary" type="number" step="0.01" min="0" value="${escapeHtml(f.salary)}" placeholder="e.g. 12000.00">
+            <div class="hint">Admin-only. Shown on the Team list.</div>
+          </label>
+          <label class="field"><span>Salary type</span>
+            <select id="sfSalaryType">
+              <option value="prorata" ${f.salary_type !== 'fixed' ? 'selected' : ''}>Pro-rata (by hours)</option>
+              <option value="fixed" ${f.salary_type === 'fixed' ? 'selected' : ''}>Fixed (full salary)</option>
+            </select>
+            <div class="hint">Fixed pays the full salary; pro-rata pays salary x hours worked.</div>
+          </label>
+        </div>
         <div class="field-row">
           <label class="field"><span>Hourly rate (R)</span>
             <input id="sfRate" type="number" step="0.01" min="0" value="${escapeHtml(f.hourly_rate)}" placeholder="e.g. 75.00">
@@ -3012,6 +3023,7 @@ function wireStaffModal() {
   const rate  = document.getElementById('sfRate');
   const hours = document.getElementById('sfHours');
   const salary = document.getElementById('sfSalary');
+  const salaryType = document.getElementById('sfSalaryType');
   const pin   = document.getElementById('sfPin');
   const adm   = document.getElementById('sfAdmin');
   const sup   = document.getElementById('sfSuper');
@@ -3031,6 +3043,7 @@ function wireStaffModal() {
   rate.addEventListener('input',  () => { f.hourly_rate  = rate.value; });
   hours.addEventListener('input', () => { f.weekly_hours = hours.value; });
   if (salary) salary.addEventListener('input', () => { f.salary = salary.value; });
+  if (salaryType) salaryType.addEventListener('change', () => { f.salary_type = salaryType.value === 'fixed' ? 'fixed' : 'prorata'; });
   const desig = document.getElementById('sfDesignation');
   if (desig) desig.addEventListener('change', () => {
     f.designation = desig.value;
@@ -3075,6 +3088,7 @@ async function submitStaffModal() {
         hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
         weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
         salary:       f.salary       === '' ? null : Number(f.salary),
+        salary_type:  f.salary_type === 'fixed' ? 'fixed' : 'prorata',
         designation: f.designation || null,
         division: f.division || null,
       });
@@ -3095,6 +3109,7 @@ async function submitStaffModal() {
         hourly_rate:  f.hourly_rate  === '' ? null : Number(f.hourly_rate),
         weekly_hours: f.weekly_hours === '' ? null : Number(f.weekly_hours),
         salary:       f.salary       === '' ? null : Number(f.salary),
+        salary_type:  f.salary_type === 'fixed' ? 'fixed' : 'prorata',
         designation: f.designation || null,
         division: f.division || null,
       });
