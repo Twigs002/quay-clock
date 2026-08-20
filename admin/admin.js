@@ -621,14 +621,14 @@ function renderNotice() {
       <td style="max-width:400px">${escapeHtml(n.message)}</td>
       <td>${whenLabel(n.trigger)}</td>
       <td>${n.active ? '<span class="pill ok">Active</span>' : '<span class="pill">Off</span>'}</td>
-      <td class="muted" style="font-size:12px">${escapeHtml(n.created_by || '—')}</td>
+      <td class="muted" style="font-size:12px">${escapeHtml(n.created_by || '-')}</td>
       <td style="white-space:nowrap;text-align:right">
         <button class="btn" data-notice-toggle="${n.id}">${n.active ? 'Turn off' : 'Turn on'}</button>
         <button class="btn" data-notice-edit="${n.id}">Edit</button>
         <button class="btn" data-notice-del="${n.id}" style="color:#C0392B">Delete</button>
       </td>
     </tr>`).join('')
-    : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">No notifications yet — add one above.</td></tr>`;
+    : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">No notifications yet, add one above.</td></tr>`;
   const trig = edit.trigger || 'clock_in';
   return `
     <div class="card" style="padding:18px 20px;margin-bottom:16px">
@@ -750,7 +750,7 @@ function renderDashboard() {
               ${trackable.map((s, i) => {
                 const ab = absById.get(s.id);
                 const tag = (ab && s.status !== 'in')
-                  ? `<span class="tag" style="background:#FFE9CB;color:#6B3F00;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:700" title="${escapeHtml(ab.reason)}${ab.reason_note ? ' — ' + escapeHtml(ab.reason_note) : ''}">● Absent · ${escapeHtml(ab.reason)}</span>`
+                  ? `<span class="tag" style="background:#FFE9CB;color:#6B3F00;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:700" title="${escapeHtml(ab.reason)}${ab.reason_note ? ', ' + escapeHtml(ab.reason_note) : ''}">● Absent · ${escapeHtml(ab.reason)}</span>`
                   : tagFor(s.status);
                 return `<tr class="${(s.status === 'off' || s.status === 'leave') ? 'dim' : ''}" data-search="${escapeHtml(((s.name||'') + ' ' + (s.role||'') + ' ' + (s.id||'')).toLowerCase())}">
                 <td>
@@ -760,9 +760,9 @@ function renderDashboard() {
                   </div>
                 </td>
                 <td>${tag}</td>
-                <td class="tnum">${s.cin || '—'}</td>
+                <td class="tnum">${s.cin || '-'}</td>
                 <td class="tnum" style="color:var(--blue);font-weight:800">${fmtHM(s.todayHrs || 0)}</td>
-                <td class="muted live-now-note-col"><div class="live-now-note">${escapeHtml(ab && ab.reason_note ? ab.reason_note : (s.note || '—'))}</div></td>
+                <td class="muted live-now-note-col"><div class="live-now-note">${escapeHtml(ab && ab.reason_note ? ab.reason_note : (s.note || '-'))}</div></td>
               </tr>`;}).join('')}
             </tbody>
           </table>
@@ -777,7 +777,7 @@ function renderDashboard() {
           </div>
           <div style="padding: 4px 20px 18px">
             ${pending.length === 0
-              ? `<div class="muted" style="font-size:13px;font-weight:500;padding:10px 0">All caught up — nothing to review.</div>`
+              ? `<div class="muted" style="font-size:13px;font-weight:500;padding:10px 0">All caught up, nothing to review.</div>`
               : pending.map(l => `<div class="appr-row" data-leave="${l.id}">
                   <div class="appr-head">
                     <div class="av" style="background:${avColor(hashIdx(l.agent_name))};width:30px;height:30px;font-size:11.5px">${initials(l.agent_name)}</div>
@@ -905,7 +905,7 @@ function wireDashboard() {
 }
 
 async function decideLeave(id, status) {
-  if (!state.admin) { state.error = 'Admin session expired — sign in again.'; render(); return; }
+  if (!state.admin) { state.error = 'Admin session expired, sign in again.'; render(); return; }
   try {
     await api('leave_decide', { id, status });
     // optimistic update
@@ -1127,7 +1127,7 @@ function renderTimesheetsGrid(range) {
             }
             const ab = absByKey.get(`${id}|${colMeta[ci].dayKey}`);
             if (ab) {
-              const tip = `Absent · ${escapeHtml(ab.reason)}${ab.reason_note ? ' — ' + escapeHtml(ab.reason_note) : ''}`;
+              const tip = `Absent · ${escapeHtml(ab.reason)}${ab.reason_note ? ', ' + escapeHtml(ab.reason_note) : ''}`;
               return `<td class="ctr ${cw}" title="${tip}"><span class="pill" style="background:#FFE9CB;color:#6B3F00;padding:2px 7px;font-size:10.5px;font-weight:700;letter-spacing:.03em">Absent</span></td>`;
             }
             if (colMeta[ci].isPast && !colMeta[ci].isWeekend) {
@@ -1287,7 +1287,7 @@ function renderTimesheetsList(range) {
     return `<div class="ts-list-empty muted">No shifts in this period.</div>`;
   }
   const cell = (v, cls = '') =>
-    `<td class="${cls}">${v == null || v === '' ? '<span class="muted">—</span>' : v}</td>`;
+    `<td class="${cls}">${v == null || v === '' ? '<span class="muted">-</span>' : v}</td>`;
   return `<div class="ts-list-wrap">
     <table class="ts-list-table">
       <thead><tr>
@@ -1305,7 +1305,7 @@ function renderTimesheetsList(range) {
       <tbody>
         ${rows.map((s, i) => {
           const d = s.inDate || s.outDate;
-          const dateLbl = d ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '—';
+          const dateLbl = d ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '-';
           if (s.absent) {
             // Absence row — collapsed to a single 'Absent · <reason>' pill
             // spanning the in/out/shift columns. Daily/weekly totals show
@@ -1321,8 +1321,8 @@ function renderTimesheetsList(range) {
               ${cell(escapeHtml(s.role || ''))}
               ${cell(escapeHtml(dateLbl))}
               <td class="ctr" colspan="3"><span class="pill" style="background:#FFE9CB;color:#6B3F00;padding:3px 10px;font-size:11.5px;font-weight:700">Absent · ${escapeHtml(s.absentReason || 'Absent')}</span></td>
-              <td class="ctr"><span class="muted">—</span></td>
-              <td class="ctr"><span class="muted">—</span></td>
+              <td class="ctr"><span class="muted">-</span></td>
+              <td class="ctr"><span class="muted">-</span></td>
               ${cell(escapeHtml(s.note || ''))}
               <td class="r"></td>
             </tr>`;
@@ -1336,8 +1336,8 @@ function renderTimesheetsList(range) {
             </td>
             ${cell(escapeHtml(s.role || ''))}
             ${cell(escapeHtml(dateLbl))}
-            <td class="ctr tnum">${s.inDate ? fmtTimeOf(s.inDate) : '<span class="muted">—</span>'}</td>
-            <td class="ctr tnum">${s.outDate ? fmtTimeOf(s.outDate) : '<span class="muted">—</span>'}</td>
+            <td class="ctr tnum">${s.inDate ? fmtTimeOf(s.inDate) : '<span class="muted">-</span>'}</td>
+            <td class="ctr tnum">${s.outDate ? fmtTimeOf(s.outDate) : '<span class="muted">-</span>'}</td>
             <td class="ctr tnum" style="font-weight:700">${fmtHM(s.hrs)}</td>
             <td class="ctr tnum" style="${s.dailyTotal == null ? 'color:var(--muted)' : 'color:var(--ink);font-weight:700'}">${s.dailyTotal != null ? fmtHM(s.dailyTotal) : ''}</td>
             <td class="ctr tnum" style="${s.weeklyTotal == null ? 'color:var(--muted)' : 'color:var(--blue);font-weight:800'}">${s.weeklyTotal != null ? fmtHM(s.weeklyTotal) : ''}</td>
@@ -1458,7 +1458,7 @@ function renderTsDetail() {
         : (e.duration_hrs != null && !isNaN(e.duration_hrs) ? Number(e.duration_hrs) : 0);
       shifts.push({
         date: (inDate || outDate),
-        tin: inDate ? fmtTimeOf(inDate) : '—',
+        tin: inDate ? fmtTimeOf(inDate) : '-',
         tout: fmtTimeOf(outDate),
         hrs,
         note: openIn ? (openIn.note || '') : (e.note || ''),
@@ -1544,7 +1544,7 @@ function renderTsDetail() {
                     <div class="ts-shift">
                       <span class="ts-time tnum">${s.tin} – ${s.tout}</span>
                       <span class="ts-shift-hrs tnum">${fmtHM(s.hrs)}</span>
-                      <span class="ts-shift-note">${escapeHtml(s.note || '—')}</span>
+                      <span class="ts-shift-note">${escapeHtml(s.note || '-')}</span>
                     </div>
                   `).join('')}
                 </div>
@@ -1675,9 +1675,9 @@ function exportTsDetailPDF() {
       rows.push({
         dayLabel: cur.toLocaleDateString('en-GB', { weekday: 'short' }),
         dateLabel: `${cur.getDate()}/${cur.getMonth() + 1}`,
-        tin: rec && rec.in ? fmtTimeOf(rec.in) : '—',
-        tout: rec && rec.out ? fmtTimeOf(rec.out) : '—',
-        hrs: rec ? fmtHM(rec.hrs) : '—',
+        tin: rec && rec.in ? fmtTimeOf(rec.in) : '-',
+        tout: rec && rec.out ? fmtTimeOf(rec.out) : '-',
+        hrs: rec ? fmtHM(rec.hrs) : '-',
         holiday: isHoliday,
         absent: !!absent,
         absentReason: absent || '',
@@ -1734,7 +1734,7 @@ function timesheetPrintHTML(o) {
   const t = o.tiles || {};
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Timesheet — ${esc(o.name)} — ${esc(o.periodLabel)}</title>
+<title>Timesheet · ${esc(o.name)} · ${esc(o.periodLabel)}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:#1a1a2e; margin:0; padding:26px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
@@ -2528,7 +2528,7 @@ function renderAbsenceMarker() {
     .filter(r => !exempt.has(r.id) && r.active !== false)
     .slice()
     .sort((x, y) => (x.name || '').localeCompare(y.name || ''));
-  const staffOpts = ['<option value="">— pick a staff member —</option>']
+  const staffOpts = ['<option value="">Pick a staff member</option>']
     .concat(roster.map(r =>
       `<option value="${escapeHtml(r.id)}" ${r.id === a.staffId ? 'selected' : ''}>${escapeHtml(r.name)}</option>`
     )).join('');
@@ -2730,9 +2730,9 @@ function renderLeave() {
                   <span style="color:var(--muted)">→</span>
                   <span>${escapeHtml(t(l.proposed_end))}</span>
                 </div>` : ''}
-              ${!l.proposed_start && !l.proposed_end ? '<span style="color:var(--muted)">—</span>' : ''}
+              ${!l.proposed_start && !l.proposed_end ? '<span style="color:var(--muted)">-</span>' : ''}
             </td>
-            <td class="muted reason-cell" title="${escapeHtml(l.reason || '')}"><div class="reason-text">${escapeHtml(l.reason || '—')}</div></td>
+            <td class="muted reason-cell" title="${escapeHtml(l.reason || '')}"><div class="reason-text">${escapeHtml(l.reason || '-')}</div></td>
             <td><span class="pill-st ${escapeHtml(l.status)}">${escapeHtml(l.status)}</span></td>
             <td class="r">
               ${l.status === 'Pending' ? `
@@ -2778,7 +2778,7 @@ function renderTeam() {
   const money = (n) => 'R' + Number(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const rows = roster.map((s, i) => {
     const isArchived = s.active === false;
-    const salary = s.salary != null ? money(s.salary) : '<span class="muted">—</span>';
+    const salary = s.salary != null ? money(s.salary) : '<span class="muted">-</span>';
     const rate = s.hourly_rate != null ? `${money(s.hourly_rate)}/hr` : '<span class="muted">No rate</span>';
     const live = liveById.get(s.id);
     const currentTeam = (!isArchived && live && live.status === 'in') ? (live.note || '').trim() : '';
@@ -2798,7 +2798,7 @@ function renderTeam() {
           <div class="av" style="background:${avColor(i)};width:38px;height:38px;font-size:14px;flex:none${isArchived ? ';filter:grayscale(100%)' : ''}">${initials(s.name)}</div>
           <div style="min-width:0">
             <div class="name" style="font-size:14px">${escapeHtml(s.name)}${badge}${archBadge}</div>
-            <div class="muted" style="font-size:12px">@${escapeHtml(s.id || '—')}</div>
+            <div class="muted" style="font-size:12px">@${escapeHtml(s.id || '-')}</div>
           </div>
         </div>
       </td>
@@ -2826,7 +2826,7 @@ function renderTeam() {
         <thead><tr>
           <th>Name</th><th>Salary</th><th>Hourly rate</th><th>On clock</th><th style="text-align:right">Actions</th>
         </tr></thead>
-        <tbody>${roster.length ? rows : `<tr><td colspan="5" class="muted" style="text-align:center;padding:28px">No staff yet${isSuper ? ' — click <b>+ Add staff</b> to add your first.' : ' — ask a superuser to add them.'}</td></tr>`}</tbody>
+        <tbody>${roster.length ? rows : `<tr><td colspan="5" class="muted" style="text-align:center;padding:28px">No staff yet${isSuper ? ', click <b>+ Add staff</b> to add your first.' : ', ask a superuser to add them.'}</td></tr>`}</tbody>
       </table>
     </div>
     ${state.staffModal ? renderStaffModal() : ''}
@@ -2918,7 +2918,7 @@ function renderStaffModal() {
           </label>
         ` : `
           <label class="field"><span>Username</span>
-            <input id="sfId" type="text" value="${escapeHtml(f.id)}" placeholder="auto from name — lowercase, no spaces" autocapitalize="off" autocomplete="off">
+            <input id="sfId" type="text" value="${escapeHtml(f.id)}" placeholder="auto from name, lowercase, no spaces" autocapitalize="off" autocomplete="off">
             <div class="hint">Used as the login id. Auto-generated from name; edit to override.</div>
           </label>
         `}
@@ -2982,22 +2982,22 @@ function renderStaffModal() {
         ${isEdit ? (
           (state.admin && (state.admin.super || state.admin.is_super)) ? `
           <label class="field"><span>Reset PIN</span>
-            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(f.pin)}" placeholder="Leave blank to keep current — enter 6 digits to change">
+            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(f.pin)}" placeholder="Leave blank to keep current, enter 6 digits to change">
             <div class="hint">Only fill this in if you want to change ${escapeHtml(f.name || 'their')} login PIN.</div>
           </label>
         ` : ''
         ) : `
           <label class="field"><span>PIN</span>
-            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(f.pin)}" placeholder="6 digits — they'll use this to log in">
+            <input id="sfPin" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${escapeHtml(f.pin)}" placeholder="6 digits, they'll use this to log in">
           </label>
         `}
         <label class="check">
           <input id="sfAdmin" type="checkbox" ${f.admin ? 'checked' : ''}>
-          <span>Admin — can open the manager dashboard</span>
+          <span>Admin: can open the manager dashboard</span>
         </label>
         <label class="check">
           <input id="sfSuper" type="checkbox" ${f.super ? 'checked' : ''}>
-          <span>Superuser — can also see the Leadership tab</span>
+          <span>Superuser: can also see the Leadership tab</span>
         </label>
         ${err ? `<div class="banner">${escapeHtml(err)}</div>` : ''}
       </div>

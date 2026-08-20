@@ -98,7 +98,7 @@ async function api(action, payload = {}) {
 // ───── HELPERS ───────────────────────────────────────────────────────
 const pad = (n) => String(n).padStart(2, '0');
 function fmtTime(iso) {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const d = new Date(iso);
   return pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
@@ -400,9 +400,9 @@ function buildPeriodView(events, cyc, holidays, isCurrentCycle, now) {
       rows.push({
         dayLabel: cur.toLocaleDateString('en-GB', { weekday: 'short' }),
         dateLabel: `${cur.getDate()}/${cur.getMonth() + 1}`,
-        tin: rec && rec.in ? fmtTime(rec.in.toISOString()) : '—',
-        tout: rec && rec.out ? fmtTime(rec.out.toISOString()) : '—',
-        hrs: rec ? fmtHM(rec.hrs) : '—',
+        tin: rec && rec.in ? fmtTime(rec.in.toISOString()) : '-',
+        tout: rec && rec.out ? fmtTime(rec.out.toISOString()) : '-',
+        hrs: rec ? fmtHM(rec.hrs) : '-',
         hrsNum: rec ? rec.hrs : 0,
         holiday: isHoliday,
         weekend: isWeekend,
@@ -578,7 +578,7 @@ function buildTimesheet(events, now) {
       day: refDate.toLocaleDateString('en-GB', { weekday: 'short' }),
       date: refDate.getDate(),
       monthShort: refDate.toLocaleDateString('en-GB', { month: 'short' }),
-      tin: openIn ? fmtTime(openIn.ts) : '—',
+      tin: openIn ? fmtTime(openIn.ts) : '-',
       tout: fmtTime(e.ts),
       hrs: fmtHM(hrs),
       hrsNum: hrs,
@@ -599,7 +599,7 @@ function buildTimesheet(events, now) {
       date: inDate.getDate(),
       monthShort: inDate.toLocaleDateString('en-GB', { month: 'short' }),
       tin: fmtTime(openIn.ts),
-      tout: '—',
+      tout: '-',
       hrs: fmtHM(hrs),
       hrsNum: hrs,
       note: openIn.note || '',
@@ -917,7 +917,7 @@ function renderHome() {
       ${state.error ? `<div class="banner">${escapeHtml(state.error)}</div>` : ''}
       <div class="card-big pad-lg home-card">
         <div class="pill ${on ? 'pill-status-in' : 'pill-status-out'}"><span class="dot"></span>${on ? 'On the clock' : 'Clocked out'}</div>
-        ${overdue ? `<div class="pill pill-overdue" style="margin-top:6px"><span class="dot"></span>${elapsedHrs.toFixed(1)} hrs — clock out is overdue</div>` : ''}
+        ${overdue ? `<div class="pill pill-overdue" style="margin-top:6px"><span class="dot"></span>${elapsedHrs.toFixed(1)} hrs, clock out is overdue</div>` : ''}
         <div class="dial">
           <svg width="208" height="208" viewBox="0 0 208 208">
             <circle cx="104" cy="104" r="98" fill="none" stroke="var(--line)" stroke-width="8"/>
@@ -1240,7 +1240,7 @@ async function submitChangeTeam() {
     render();
   } catch (e) {
     state.sheet.busy = false;
-    state.sheet.error = String(e.message || e) + ' — you may need to clock in again manually if your previous shift closed.';
+    state.sheet.error = String(e.message || e) + ', you may need to clock in again manually if your previous shift closed.';
     render();
   }
 }
@@ -1297,7 +1297,7 @@ function renderReportSheet() {
     : CLOCK_CAMPAIGNS);
   const selectedChips = picked.size
     ? Array.from(picked).map(t => `<button type="button" class="rep-team-chip on" data-rep-unteam="${escapeHtml(t)}">${escapeHtml(t)}<span aria-hidden="true"> ×</span></button>`).join('')
-    : `<span class="muted" style="font-size:12px">No teams picked yet — tap below</span>`;
+    : `<span class="muted" style="font-size:12px">No teams picked yet, tap below</span>`;
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
     <div class="sheet sheet-report" role="dialog">
@@ -1454,7 +1454,7 @@ function renderForgotSheet() {
         ${icon('clock', 22, 'var(--red)')}
         <div>
           <h2>Forgot to clock out?</h2>
-          <div class="req" style="color:var(--muted)">You clocked in <b>${escapeHtml(startStr)}</b> — that's <b>${f.elapsedHrs.toFixed(1)} hours ago</b>.</div>
+          <div class="req" style="color:var(--muted)">You clocked in <b>${escapeHtml(startStr)}</b>, that's <b>${f.elapsedHrs.toFixed(1)} hours ago</b>.</div>
         </div>
       </div>
       <div style="margin-top:14px">
@@ -1504,7 +1504,7 @@ async function submitForgotClockOut() {
   try {
     const outRes = await api('clock', {
       agent_id: state.agent.id, dir: 'out',
-      note: 'Auto clock-out after long shift — correction requested',
+      note: 'Auto clock-out after long shift, correction requested',
     });
     if (!outRes || outRes.ok === false) {
       throw new Error(outRes && outRes.error || 'Could not clock out');
@@ -1515,7 +1515,7 @@ async function submitForgotClockOut() {
       start: f.date,
       end: f.date,
       proposed_end: f.time,
-      reason: 'Forgot to clock out — requesting recorded end-time be set to ' + f.time,
+      reason: 'Forgot to clock out, requesting recorded end-time be set to ' + f.time,
     });
     if (!reqRes || reqRes.ok === false) {
       throw new Error(reqRes && reqRes.error || 'Could not file correction request');
@@ -1637,8 +1637,8 @@ function renderNoteSheet() {
     : '';
   const title = isChangeMode ? 'Change team' : 'What are you working on?';
   const reqLine = singlePick
-    ? (isChangeMode ? 'Pick the new team — your hours so far stay on the previous team' : 'Required · pick one team')
-    : 'Required · tap one or more — hours split evenly';
+    ? (isChangeMode ? 'Pick the new team, your hours so far stay on the previous team' : 'Required · pick one team')
+    : 'Required · tap one or more, hours split evenly';
   return `<div class="sheet-wrap" id="sheetWrap">
     <div class="sheet-back" id="sheetBack"></div>
     <div class="sheet sheet-picker">
@@ -1680,7 +1680,7 @@ function renderLeaveSheet() {
           ${icon('clock', 20, 'var(--blue)')}
           <div>
             <h2>Shift-time change request</h2>
-            <div class="sheet-head-sub">e.g. you forgot to clock in at 8 — let admin know the real times</div>
+            <div class="sheet-head-sub">e.g. you forgot to clock in at 8, let admin know the real times</div>
           </div>
         </div>
         <button class="sheet-close" id="sheetClose" type="button" aria-label="Close">${icon('x', 20, 'var(--muted)')}</button>
@@ -1693,7 +1693,7 @@ function renderLeaveSheet() {
         <button type="button" data-req-which="in" class="req-which ${(s.which || 'in') === 'in' ? 'on' : ''}" style="flex:1;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:${(s.which || 'in') === 'in' ? 'var(--blue)' : 'var(--card)'};color:${(s.which || 'in') === 'in' ? '#fff' : 'var(--ink)'};font-weight:700;font-size:13px;cursor:pointer">Clock-IN time</button>
         <button type="button" data-req-which="out" class="req-which ${s.which === 'out' ? 'on' : ''}" style="flex:1;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:${s.which === 'out' ? 'var(--blue)' : 'var(--card)'};color:${s.which === 'out' ? '#fff' : 'var(--ink)'};font-weight:700;font-size:13px;cursor:pointer">Clock-OUT time</button>
       </div>
-      <div style="font-size:11.5px;color:var(--muted);margin-top:5px">Pick one — staff can only request a correction to one side per request, to keep the admin review clean.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:5px">Pick one, staff can only request a correction to one side per request, to keep the admin review clean.</div>
 
       <label style="display:block;margin-top:12px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">${(s.which || 'in') === 'in' ? 'What the clock-in SHOULD have been' : 'What the clock-out SHOULD have been'}</label>
       ${(s.which || 'in') === 'in'
@@ -1984,7 +1984,7 @@ function renderTimesheet() {
         ${ms.holidays && ms.holidays.length ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line, #e6e6e6);font-size:12.5px;color:var(--muted)">
           🇿🇦 Public holiday${ms.holidays.length > 1 ? 's' : ''} this cycle (unpaid, excluded from target):
-          ${ms.holidays.map((h) => `<b style="color:var(--ink,inherit)">${escapeHtml(h.label)}</b> — ${escapeHtml(h.name)}`).join('; ')}
+          ${ms.holidays.map((h) => `<b style="color:var(--ink,inherit)">${escapeHtml(h.label)}</b> - ${escapeHtml(h.name)}`).join('; ')}
         </div>` : ''}
       </div>` : '';
 
@@ -2047,7 +2047,7 @@ function renderTimesheet() {
                 <b>${e.tin} – ${e.tout}</b>
                 ${e.live ? `<span class="pill pill-on"><span class="dot"></span>Live</span>` : ''}
               </div>
-              <div class="note ellipsis">${escapeHtml(e.note || e.loc || '—')}</div>
+              <div class="note ellipsis">${escapeHtml(e.note || e.loc || '-')}</div>
             </div>
             <div class="hrs tnum">${e.hrs}</div>
           </div>
@@ -2221,7 +2221,7 @@ function timesheetPrintHTML(o) {
   const t = o.tiles || {};
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Timesheet — ${esc(o.name)} — ${esc(o.periodLabel)}</title>
+<title>Timesheet · ${esc(o.name)} · ${esc(o.periodLabel)}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:#1a1a2e; margin:0; padding:26px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
@@ -2287,7 +2287,7 @@ function renderLeave() {
   return `${head}
     <div class="content tight">
       <div class="card pad-sm" style="text-align:left;font-size:13px;color:var(--muted);line-height:1.5">
-        Use this to ask admin to correct a shift — for example if you forgot to clock in at 8am.
+        Use this to ask admin to correct a shift, for example if you forgot to clock in at 8am.
       </div>
       <button class="btn-cta ok btn-cta-icon" id="leaveBtn" style="margin-top:14px">
         ${icon('plus', 22, 'var(--ink)', 2.4)}<span>NEW REQUEST</span>
@@ -2299,7 +2299,7 @@ function renderLeave() {
           const cls = (r.status === 'Approved' ? 'pill-approved'
                     : r.status === 'Declined' ? 'pill-declined' : 'pill-pending');
           const times = (r.proposed_start || r.proposed_end)
-            ? `${tFmt(r.proposed_start) || '—'} → ${tFmt(r.proposed_end) || '—'}`
+            ? `${tFmt(r.proposed_start) || '-'} → ${tFmt(r.proposed_end) || '-'}`
             : '';
           return `<div class="card req-row">
               <div class="ic">${icon('clock', 20, 'var(--blue)')}</div>
