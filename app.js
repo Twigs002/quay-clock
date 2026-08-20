@@ -811,8 +811,86 @@ function renderHeader({ centerLogo, title, sub, greet, date, action, page } = {}
 }
 
 // ───── HOME ──────────────────────────────────────────────────────────
+// ───── THOUGHT FOR THE DAY ───────────────────────────────────────────
+// A single inspiring quote shown as an ambient card on Home. Everyone sees
+// the SAME quote on a given day (team cohesion), it stays put all day, and
+// it rotates automatically at local midnight. Curated + deterministic, so it
+// works fully offline with zero backend/API cost. ~60 entries → the list
+// cycles roughly every two months before a repeat.
+const DAILY_QUOTES = [
+  { text: 'The harder you work for something, the greater you’ll feel when you achieve it.', author: '' },
+  { text: 'Success is the sum of small efforts, repeated day in and day out.', author: 'Robert Collier' },
+  { text: 'The only place where success comes before work is in the dictionary.', author: 'Vidal Sassoon' },
+  { text: 'Opportunities don’t happen. You create them.', author: 'Chris Grosser' },
+  { text: 'Every call is a fresh start. The last one is already history.', author: '' },
+  { text: 'Don’t watch the clock; do what it does. Keep going.', author: 'Sam Levenson' },
+  { text: 'Your attitude, not your aptitude, will determine your altitude.', author: 'Zig Ziglar' },
+  { text: 'The expert in anything was once a beginner.', author: 'Helen Hayes' },
+  { text: 'Great things are done by a series of small things brought together.', author: 'Vincent van Gogh' },
+  { text: 'A no today is just a not-yet. Keep dialing.', author: '' },
+  { text: 'Believe you can and you’re halfway there.', author: 'Theodore Roosevelt' },
+  { text: 'Motivation gets you going, but discipline keeps you growing.', author: 'John C. Maxwell' },
+  { text: 'The way to get started is to quit talking and begin doing.', author: 'Walt Disney' },
+  { text: 'Fall seven times, stand up eight.', author: 'Japanese Proverb' },
+  { text: 'Energy and persistence conquer all things.', author: 'Benjamin Franklin' },
+  { text: 'You miss 100% of the shots you don’t take.', author: 'Wayne Gretzky' },
+  { text: 'Whether you think you can or you think you can’t, you’re right.', author: 'Henry Ford' },
+  { text: 'Quality performance starts with a positive attitude.', author: 'Jeffrey Gitomer' },
+  { text: 'Small disciplines repeated with consistency lead to great achievements.', author: 'John C. Maxwell' },
+  { text: 'The difference between ordinary and extraordinary is that little extra.', author: 'Jimmy Johnson' },
+  { text: 'Success usually comes to those too busy to be looking for it.', author: 'Henry David Thoreau' },
+  { text: 'Do the hard jobs first. The easy jobs will take care of themselves.', author: 'Dale Carnegie' },
+  { text: 'Confidence comes not from always being right but from not fearing to be wrong.', author: 'Peter T. McIntyre' },
+  { text: 'It always seems impossible until it’s done.', author: 'Nelson Mandela' },
+  { text: 'A goal is a dream with a deadline.', author: 'Napoleon Hill' },
+  { text: 'Discipline is choosing between what you want now and what you want most.', author: 'Abraham Lincoln' },
+  { text: 'Nothing will work unless you do.', author: 'Maya Angelou' },
+  { text: 'The secret of getting ahead is getting started.', author: 'Mark Twain' },
+  { text: 'Enthusiasm is common. Endurance is rare.', author: 'Angela Duckworth' },
+  { text: 'You don’t have to be great to start, but you have to start to be great.', author: 'Zig Ziglar' },
+  { text: 'Persistence is to the character of man as carbon is to steel.', author: 'Napoleon Hill' },
+  { text: 'Every accomplishment starts with the decision to try.', author: '' },
+  { text: 'Hard work beats talent when talent doesn’t work hard.', author: 'Tim Notke' },
+  { text: 'Champions keep playing until they get it right.', author: 'Billie Jean King' },
+  { text: 'The best way to predict the future is to create it.', author: 'Peter Drucker' },
+  { text: 'What you do today can improve all your tomorrows.', author: 'Ralph Marston' },
+  { text: 'Act as if what you do makes a difference. It does.', author: 'William James' },
+  { text: 'Success is not final, failure is not fatal: it is the courage to continue that counts.', author: 'Winston Churchill' },
+  { text: 'If you get tired, learn to rest, not to quit.', author: 'Banksy' },
+  { text: 'Make each day your masterpiece.', author: 'John Wooden' },
+  { text: 'The man who moves a mountain begins by carrying away small stones.', author: 'Confucius' },
+  { text: 'Well done is better than well said.', author: 'Benjamin Franklin' },
+  { text: 'Start where you are. Use what you have. Do what you can.', author: 'Arthur Ashe' },
+  { text: 'A river cuts through rock not because of its power but its persistence.', author: 'James N. Watkins' },
+  { text: 'Dream big. Start small. Act now.', author: 'Robin Sharma' },
+  { text: 'The only limit to our realisation of tomorrow is our doubts of today.', author: 'Franklin D. Roosevelt' },
+  { text: 'Winners are not people who never fail, but people who never quit.', author: '' },
+  { text: 'Progress, not perfection.', author: '' },
+  { text: 'Focus on being productive instead of busy.', author: 'Tim Ferriss' },
+  { text: 'Great effort springs naturally from a great attitude.', author: 'Pat Riley' },
+  { text: 'The sun himself is weak when he first rises, and gathers strength as the day gets on.', author: 'Charles Dickens' },
+  { text: 'You are always one decision away from a totally different day.', author: '' },
+  { text: 'Doubt kills more dreams than failure ever will.', author: 'Suzy Kassem' },
+  { text: 'Be so good they can’t ignore you.', author: 'Steve Martin' },
+  { text: 'The comeback is always stronger than the setback.', author: '' },
+  { text: 'Little by little, a little becomes a lot.', author: 'Tanzanian Proverb' },
+  { text: 'Work hard in silence, let your success be the noise.', author: 'Frank Ocean' },
+  { text: 'Today is your opportunity to build the tomorrow you want.', author: 'Ken Poirot' },
+  { text: 'Don’t count the days, make the days count.', author: 'Muhammad Ali' },
+  { text: 'One more call could change your whole week. Make it.', author: '' },
+];
+
+function dailyQuote() {
+  // Days since the Unix epoch in LOCAL time, so the quote flips at the team’s
+  // midnight (SAST) rather than UTC, and is identical for every user that day.
+  const nowLocalMs = Date.now() - new Date().getTimezoneOffset() * 60000;
+  const epochDay = Math.floor(nowLocalMs / 86400000);
+  return DAILY_QUOTES[((epochDay % DAILY_QUOTES.length) + DAILY_QUOTES.length) % DAILY_QUOTES.length];
+}
+
 function renderHome() {
   const h = state.home || {};
+  const q = dailyQuote();
   const now = new Date();
   const greet = greetingFor(now) + ', ' + firstName(state.agent.name);
   const on = h.status === 'in';
@@ -872,6 +950,13 @@ function renderHome() {
           <div class="stat-val"><span class="v">${weekDisplay}</span><span class="u">of ${h.weekTarget || 45}h</span></div>
           <div class="stat-bar"><div style="width:${(weekPct * 100).toFixed(0)}%"></div></div>
         </div>
+      </div>
+
+      <div class="card pad quote-card" style="position:relative;overflow:hidden;border-left:3px solid var(--blue);margin-top:14px">
+        <div aria-hidden="true" style="font-family:'Permanent Marker',cursive;font-size:52px;line-height:0.6;color:var(--blue);opacity:0.16;position:absolute;top:14px;right:18px">”</div>
+        <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px">Thought for the day</div>
+        <div style="font-size:15.5px;line-height:1.5;color:var(--ink);font-weight:600;max-width:92%">${escapeHtml(q.text)}</div>
+        ${q.author ? `<div style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:9px">— ${escapeHtml(q.author)}</div>` : ''}
       </div>
     </div>
   `;

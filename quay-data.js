@@ -447,7 +447,15 @@ const handlers = {
       openIns[e.staff_id] = null;
     });
     const now = Date.now();
-    const team = r.roster.map((a) => {
+    // Team page shows the floor only — hide admins, super-admins and managers
+    // (brokers are already excluded upstream by roster()). RMs and callers
+    // (LN / Assistant / Fancy) stay. Mirrors the _isAdminOrManager gate in
+    // app.js that decides who is allowed to SEE this page in the first place,
+    // so the people who can view the roster never appear on it themselves.
+    const team = r.roster
+      .filter((a) => !(a.admin || a.super
+        || a.designation === 'super_admin' || a.designation === 'manager'))
+      .map((a) => {
       const liveBonus = (a.status === 'in' && a.lastIn)
         ? Math.max(0, (now - new Date(a.lastIn).getTime()) / 3.6e6) : 0;
       return {
