@@ -956,7 +956,7 @@ function renderHome() {
         <div aria-hidden="true" style="font-family:'Permanent Marker',cursive;font-size:52px;line-height:0.6;color:var(--blue);opacity:0.16;position:absolute;top:14px;right:18px">”</div>
         <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px">Thought for the day</div>
         <div style="font-size:15.5px;line-height:1.5;color:var(--ink);font-weight:600;max-width:92%">${escapeHtml(q.text)}</div>
-        ${q.author ? `<div style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:9px">— ${escapeHtml(q.author)}</div>` : ''}
+        ${q.author ? `<div style="font-size:12.5px;color:var(--muted);font-weight:600;margin-top:9px">${escapeHtml(q.author)}</div>` : ''}
       </div>
     </div>
   `;
