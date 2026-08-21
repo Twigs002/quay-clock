@@ -1,7 +1,11 @@
 # Quay 1 — Crew App
 
 Mobile-first PWA + admin web dashboard for Quay 1 office & sales staff.
-Replaces Connecteam on the free tier; data lives in a Google Sheet you own.
+Replaces Connecteam; backed by Supabase (Postgres + Auth + Edge Functions).
+
+> Note: this app began on a Google Apps Script + Google Sheet backend and has
+> since migrated to Supabase (project `dqszbqiimbfvmmnpgpsb`). The `apps_script/`
+> folder is retained as legacy reference only; the live backend is Supabase.
 
 Two surfaces, one backend:
 
@@ -16,30 +20,34 @@ Two surfaces, one backend:
 
 ```
 Phone PWA  ─┐
-            │  POST { action, ... }   (text/plain to dodge CORS preflight)
-Admin Web  ─┴────► Google Apps Script Web App
+            │  supabase-js (REST/RPC) + Edge Functions
+Admin Web  ─┴────► Supabase
                      │
                      ▼
-              Google Sheet (Quay Clock)
-                Roster · Events · Leave · Locations
+        Postgres (staff · shifts/events · leave · locations)
+        Auth (session)  ·  Edge Functions (admin-create-staff, admin-set-pin)
 ```
 
 - Frontend: vanilla HTML/CSS/JS, install-to-homescreen PWA, offline shell.
-- Backend: one Apps Script file (`apps_script/Code.gs`), deployed as a Web
-  App. Free.
-- Storage: one Google Sheet with four tabs.
-- Auth: per-user 4-digit PIN. Admin PIN unlocks the admin dashboard.
+- Backend/Storage: Supabase Postgres, accessed via the supabase-js client
+  (`quay-data.js`) with the public anon key + RLS. Privileged admin actions
+  (create staff, set PIN) go through Edge Functions in `supabase/functions/`.
+- Auth: Supabase session; per-user 4-digit PIN. Admin PIN unlocks the admin
+  dashboard.
 
 ---
 
 ## Setup (~10 minutes, one-time)
 
-1. **Backend** — follow [`apps_script/SETUP.md`](apps_script/SETUP.md):
-   create the sheet, paste the script, deploy as a Web App, copy the URL.
-2. **Wire the URL** into `app.js` (`APPS_SCRIPT_URL` constant) and into
-   `admin/admin.js` (`APPS_SCRIPT_URL` constant).
-3. **Roster** — fill in the `Roster` tab (id, name, role, team, pin,
-   active, admin). The `id` is the username — short, lowercase, no spaces.
+1. **Backend** — a Supabase project (Postgres + Auth) with the `staff`,
+   shift/event, leave and location tables, plus the `admin-create-staff` and
+   `admin-set-pin` Edge Functions in `supabase/functions/`.
+2. **Wire the config** into `quay-config.js` (`SUPABASE_URL`,
+   `SUPABASE_ANON_KEY` — the public anon key is safe in the client; RLS
+   enforces access).
+3. **Staff** — add staff rows (name, role, team, pin, weekly_hours,
+   salary_type, allowed_sites…) via the admin dashboard, which calls the
+   `admin-create-staff` Edge Function.
 4. **Deploy** — push to GitHub. Pages auto-serves at the repo URL.
 
 ---
@@ -82,6 +90,8 @@ quay-dashboard-v2 README for that wiring.
 ```
 index.html         PWA shell
 styles.css         Signal-language brand styles
+quay-config.js     Supabase URL + anon key
+quay-data.js       Supabase data layer (supabase-js client, queries, RPC)
 app.js             PWA state machine + 4 tabs
 manifest.json      PWA install metadata
 sw.js              Service worker (offline shell, network-first API)
@@ -89,11 +99,15 @@ admin/             Admin web dashboard
   index.html
   admin.js
   admin.css
+supabase/
+  functions/
+    admin-create-staff   Edge Function: create a staff row
+    admin-set-pin        Edge Function: set/reset a staff PIN
 assets/            Logo + brand assets
 icons/             192px / 512px launcher icons
-apps_script/
-  Code.gs          v2 backend (paste into the Apps Script editor)
-  SETUP.md         5-minute deployment guide
+apps_script/       LEGACY — original Google Sheet backend, no longer live
+  Code.gs
+  SETUP.md
 ```
 
 ---
@@ -109,7 +123,7 @@ apps_script/
 | Leave requests + admin approve | ❌ on free | ✅ |
 | Live team view | ❌ on free | ✅ |
 | Admin dashboard | ❌ on free | ✅ |
-| Data export | ❌ (paywall) | ✅ (CSV + your sheet) |
+| Data export | ❌ (paywall) | ✅ (CSV + your Supabase database) |
 | Dashboard integration | ❌ | ✅ (planned) |
 | Geofence | ❌ on free | UI placeholder; not enforced yet |
 | Native apps in stores | ✅ | PWA only (good enough on iOS 16+ / Android) |
