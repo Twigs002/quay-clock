@@ -1,0 +1,16 @@
+{
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "timeclock-sand.vercel.app" }],
+      "destination": "https://staffclock-app.vercel.app/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "timeclock-twigs002s-projects.vercel.app" }],
+      "destination": "https://staffclock-app.vercel.app/:path*",
+      "permanent": true
+    }
+  ]
+}

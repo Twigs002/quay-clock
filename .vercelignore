@@ -1,0 +1,8 @@
+# Keep the public deploy to just the PWA. Backend source and tooling
+# live in the repo but must not be served as public static files.
+supabase/
+apps_script/
+.claude-flow/
+.github/
+README.md
+*.log
