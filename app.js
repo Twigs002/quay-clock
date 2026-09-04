@@ -1031,7 +1031,7 @@ function firstName(n) { return String(n || '').split(/\s+/)[0]; }
 // To retire a team: set `archived: true` on its row below (don't delete it,
 // or its historical rows will lose their pre-select).
 const CLOCK_CAMPAIGNS_ALL = [
-  { name: 'ASB Calling' }, { name: 'Amigos' }, { name: 'Assassins' }, { name: 'Avengers' },
+  { name: 'ASB Calling' }, { name: 'ASB Injection' }, { name: 'Amigos' }, { name: 'Assassins' }, { name: 'Avengers' },
   { name: 'Babes' }, { name: 'Ballers' }, { name: 'Bergscape' }, { name: 'Betties' },
   { name: 'Blitz' }, { name: 'Boets' }, { name: 'Bulls' }, { name: 'Cavaliers' },
   { name: 'Chargers' }, { name: 'City Sunsets' }, { name: 'Clienthub' },
@@ -1046,9 +1046,9 @@ const CLOCK_CAMPAIGNS_ALL = [
   { name: 'Pirates' }, { name: 'Power Rangers' }, { name: 'Prom Queens' },
   { name: 'Proteas' }, { name: 'Raccoons' }, { name: 'Rentals' }, { name: 'Rockets' }, { name: 'Samurais' },
   { name: 'Slayers' }, { name: 'Soccer Moms' }, { name: 'Spartans' },
-  { name: 'Surfers' }, { name: 'Swesties' }, { name: 'Targaryens' }, { name: 'Tigers' },
+  { name: 'SS Injection' }, { name: 'Surfers' }, { name: 'Swesties' }, { name: 'Targaryens' }, { name: 'Tigers' },
   { name: 'TNT' }, { name: 'Tornadoes' }, { name: 'Vikings' }, { name: 'Vipers' },
-  { name: 'Warriors' }, { name: 'Weasels' }, { name: 'Wizards' }, { name: 'Wolves' },
+  { name: 'WSB Injection' }, { name: 'Warriors' }, { name: 'Weasels' }, { name: 'Wizards' }, { name: 'Wolves' },
   { name: 'Wombats' },
   // Archived — hidden from picker, but kept so historical notes/timesheets
   // still parse and pre-select correctly.
