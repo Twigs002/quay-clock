@@ -100,10 +100,22 @@ do $$ begin
 end $$;
 
 -- STAFF
--- Authenticated users see the roster (needed for Team views).
-create policy staff_select_authn
+-- Self-or-admin select. A blanket `using (true)` here would expose any
+-- sensitive staff columns (hourly_rate / weekly_hours, added by later
+-- migrations) to every authenticated user via devtools. This mirrors the
+-- production policy staff_select_self_or_admin from
+-- migrations/2026-07-01_staff_rls_split.sql so reprovisioning from this
+-- baseline is safe. (That migration adds an `or public.is_super_flag()`
+-- term; is_super / is_super_flag() do not exist in this baseline, so the
+-- term is omitted here and is re-added by the migration alongside them.)
+-- Team pickers / name lookups should read the safe public.staff_public
+-- view (also created by that migration), not the base table.
+create policy staff_select_self_or_admin
   on public.staff for select to authenticated
-  using (true);
+  using (
+    id = public.current_staff_id()
+    or public.is_admin()
+  );
 
 -- Only admins can add / edit / disable staff.
 create policy staff_admin_write

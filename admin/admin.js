@@ -95,7 +95,12 @@ async function boot() {
           _reReadyTimer = setTimeout(_requestFresh, msUntilRefresh);
         }
         const staff = await window.QD.loadSelfStaff();
-        if (staff && (staff.is_admin || staff.designation === 'payroll')) {
+        // Gate the admin dashboard on is_admin ONLY, to match the server:
+        // RLS and the Edge Functions authorize on is_admin(). A payroll-
+        // designated user without is_admin would otherwise get a UI shell
+        // whose reads/writes all fail under RLS. staff.is_admin is read
+        // directly from loadSelfStaff(), so it is reliable client-side.
+        if (staff && staff.is_admin) {
           state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true, super: !!staff.is_super, is_super: !!staff.is_super };
           writeSession(state.admin);
           await loadAll();
@@ -113,7 +118,12 @@ async function boot() {
   // moment ago, or a prior visit).
   try {
     const staff = window.QD ? await window.QD.loadSelfStaff() : null;
-    if (staff && (staff.is_admin || staff.designation === 'payroll')) {
+    // Gate the admin dashboard on is_admin ONLY, to match the server:
+    // RLS and the Edge Functions authorize on is_admin(). A payroll-
+    // designated user without is_admin would otherwise get a UI shell
+    // whose reads/writes all fail under RLS. staff.is_admin is read
+    // directly from loadSelfStaff(), so it is reliable client-side.
+    if (staff && staff.is_admin) {
       state.admin = { id: staff.id, name: staff.name, role: staff.role || '', team: staff.team || '', admin: true, super: !!staff.is_super, is_super: !!staff.is_super };
       writeSession(state.admin);
       loadAll();
@@ -343,8 +353,18 @@ async function loadAll() {
     if (!state.data.payrollTeams || !state.data.payrollTeams.length) {
       try {
         const tr = await window.sb.from('payroll_canonical_divisions').select('name').order('name');
+        // Supabase returns { data, error } rather than throwing, so surface
+        // a query-level error explicitly instead of silently degrading.
+        if (tr.error) throw tr.error;
         state.data.payrollTeams = (tr.data || []).map(x => x.name).filter(Boolean);
-      } catch { state.data.payrollTeams = []; }
+      } catch (e) {
+        // Keep the empty fallback (timesheet team picker degrades to teams
+        // already seen in notes), but don't swallow the failure: log it and
+        // let the admin know why the canonical team list is missing.
+        console.error('Failed to load payroll_canonical_divisions:', e);
+        showToast('Could not load canonical teams — team picker may be incomplete.');
+        state.data.payrollTeams = [];
+      }
     }
     // Initial Timesheets payload mirrors the dashboard's current-week events.
     if (state.tsPeriod === 'this-week') {
