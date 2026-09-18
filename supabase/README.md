@@ -95,3 +95,40 @@ name-to-username lookup. Dates accept `YYYY-MM-DD` or `DD/MM/YYYY`.
 The script is **idempotent** by default — a row whose clock-in timestamp
 already exists for that staff member is skipped (so re-runs are safe).
 Pass `--on-conflict=append` to insert anyway as a second shift.
+
+---
+
+## Team-source drift guard
+
+There are two independent team lists in this system that can silently drift
+apart:
+
+- `CLOCK_CAMPAIGNS_ALL` — hardcoded in `app.js`; what staff clock in/out
+  against.
+- `payroll_canonical_divisions` — a Supabase table (owned by
+  quay-dashboard-v2) that the admin payroll picker reads from.
+
+If a canonical division is missing from `CLOCK_CAMPAIGNS_ALL`, staff can
+never clock in against it and payroll can't reconcile the hours. Run
+`../tests/team_source_drift.mjs` (Node 18+, **no npm install needed** — it
+uses global `fetch` and the Supabase REST API) to catch that:
+
+```bash
+cd quay-clock
+SUPABASE_URL="https://dqszbqiimbfvmmnpgpsb.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="<service_role>" \
+node tests/team_source_drift.mjs
+```
+
+- `SUPABASE_URL` defaults to the value in `quay-config.js`; a service-role
+  key is preferred but it falls back to the committed anon key if the table
+  is readable to it.
+- Exit `0` = in sync (or skipped when no creds are present), `1` = drift
+  (canonical divisions missing from the clock list — the failure lists
+  them), `2` = could not run.
+- Set `STRICT=1` to turn "no creds available" into a failure (exit `2`)
+  rather than a skip — use this in CI once the service-role key is wired in
+  as a secret.
+
+This is a **detection** guard only; full unification of the two lists is a
+separate decision (see the PR that added this).
